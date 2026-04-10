@@ -238,9 +238,15 @@ template <class Params_> struct alignas(32) field {
         Params_::r_squared_0, Params_::r_squared_1, Params_::r_squared_2, Params_::r_squared_3
     };
 #else
-    static constexpr uint256_t r_squared_uint{
-        Params_::r_squared_wasm_0, Params_::r_squared_wasm_1, Params_::r_squared_wasm_2, Params_::r_squared_wasm_3
-    };
+    // BN254 fields (Fq/Fr) use Logjumps Montgomery multiplication with R=2^256
+    // (same as native), so they use the native r_squared constants.
+    // Other fields still use the 9x29-bit CIOS path with R=2^261.
+    static constexpr uint256_t r_squared_uint =
+        (Params_::modulus_0 == 0x3C208C16D87CFD47ULL || Params_::modulus_0 == 0x43E1F593F0000001ULL)
+        ? uint256_t{ Params_::r_squared_0, Params_::r_squared_1,
+                     Params_::r_squared_2, Params_::r_squared_3 }
+        : uint256_t{ Params_::r_squared_wasm_0, Params_::r_squared_wasm_1,
+                     Params_::r_squared_wasm_2, Params_::r_squared_wasm_3 };
     static constexpr std::array<uint64_t, 9> wasm_modulus = { Params::modulus_wasm_0, Params::modulus_wasm_1,
                                                               Params::modulus_wasm_2, Params::modulus_wasm_3,
                                                               Params::modulus_wasm_4, Params::modulus_wasm_5,
@@ -261,9 +267,14 @@ template <class Params_> struct alignas(32) field {
                 Params::cube_root_0, Params::cube_root_1, Params::cube_root_2, Params::cube_root_3
             };
 #else
-            constexpr field result{
-                Params::cube_root_wasm_0, Params::cube_root_wasm_1, Params::cube_root_wasm_2, Params::cube_root_wasm_3
-            };
+            // BN254 fields use Logjumps with R=2^256 (native constants).
+            // Other fields use 9x29-bit CIOS with R=2^261 (wasm constants).
+            constexpr field result =
+                (Params::modulus_0 == 0x3C208C16D87CFD47ULL || Params::modulus_0 == 0x43E1F593F0000001ULL)
+                ? field{ Params::cube_root_0, Params::cube_root_1,
+                         Params::cube_root_2, Params::cube_root_3 }
+                : field{ Params::cube_root_wasm_0, Params::cube_root_wasm_1,
+                         Params::cube_root_wasm_2, Params::cube_root_wasm_3 };
 #endif
             return result;
         } else {

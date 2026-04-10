@@ -11,6 +11,7 @@
 
 #include "./field_impl.hpp"
 #include "barretenberg/common/bb_bench.hpp"
+#include "./field_impl_float_montmul_alt.hpp"
 
 namespace bb {
 
@@ -712,6 +713,15 @@ template <class T> constexpr field<T> field<T>::montgomery_mul(const field& othe
     if constexpr (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
         return montgomery_mul_big(other);
     }
+    // Logjumps 4x64-bit Montgomery multiplication for BN254 fields (Fq/Fr).
+    // Uses Karatsuba-style folding with precomputed 2^(-64k) mod p constants,
+    // reducing widening multiplications from 162 (9x29 CIOS) to 32.
+    // Fully constexpr — handles both compile-time and runtime evaluation.
+    if constexpr (float_montmul_alt::is_logjumps_supported_field<T>()) {
+        field result;
+        float_montmul_alt::montgomery_mul_logjumps_64<T>(data, other.data, result.data);
+        return result;
+    }
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
     // process first limb of self, data[0]
     auto [t0, c] = mul_wide(data[0], other.data[0]);
@@ -862,6 +872,12 @@ template <class T> constexpr field<T> field<T>::montgomery_square() const noexce
 {
     if constexpr (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
         return montgomery_mul_big(*this);
+    }
+    // Logjumps squaring for BN254 fields — reuses multiplication (no dedicated square path yet).
+    if constexpr (float_montmul_alt::is_logjumps_supported_field<T>()) {
+        field result;
+        float_montmul_alt::montgomery_mul_logjumps_64<T>(data, data, result.data);
+        return result;
     }
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
     uint64_t carry_hi = 0;
