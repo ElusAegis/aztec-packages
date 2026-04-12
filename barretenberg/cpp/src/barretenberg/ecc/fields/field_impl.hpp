@@ -33,8 +33,8 @@ namespace bb {
  **/
 template <class T> constexpr field<T> field<T>::operator*(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         // >= 255-bits or <= 64-bits.
         return montgomery_mul(other);
     } else {
@@ -49,8 +49,8 @@ template <class T> constexpr field<T> field<T>::operator*(const field& other) co
 
 template <class T> constexpr field<T>& field<T>::operator*=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         // >= 255-bits or <= 64-bits.
         *this = operator*(other);
     } else {
@@ -71,8 +71,8 @@ template <class T> constexpr field<T>& field<T>::operator*=(const field& other) 
  **/
 template <class T> constexpr field<T> field<T>::sqr() const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         return montgomery_square();
     } else {
         if (std::is_constant_evaluated()) {
@@ -86,8 +86,8 @@ template <class T> constexpr field<T> field<T>::sqr() const noexcept
 
 template <class T> constexpr void field<T>::self_sqr() & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         *this = montgomery_square();
     } else {
         if (std::is_constant_evaluated()) {
@@ -106,8 +106,8 @@ template <class T> constexpr void field<T>::self_sqr() & noexcept
  **/
 template <class T> constexpr field<T> field<T>::operator+(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         return add(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -121,8 +121,8 @@ template <class T> constexpr field<T> field<T>::operator+(const field& other) co
 
 template <class T> constexpr field<T>& field<T>::operator+=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         (*this) = operator+(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -155,8 +155,8 @@ template <class T> constexpr field<T> field<T>::operator++(int) noexcept
  **/
 template <class T> constexpr field<T> field<T>::operator-(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         return subtract(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -180,8 +180,8 @@ template <class T> constexpr field<T> field<T>::operator-() const noexcept
 
 template <class T> constexpr field<T>& field<T>::operator-=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         *this = subtract(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -203,8 +203,8 @@ template <class T> constexpr void field<T>::self_neg() & noexcept
 
 template <class T> constexpr void field<T>::self_conditional_negate(const uint64_t predicate) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         *this = predicate ? -(*this) : *this; // NOLINT
     } else {
         if (std::is_constant_evaluated()) {
@@ -333,8 +333,8 @@ template <class T> constexpr void field<T>::self_from_montgomery_form_reduced() 
 
 template <class T> constexpr field<T> field<T>::reduce_once() const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         return reduce();
     } else {
         if (std::is_constant_evaluated()) {
@@ -346,8 +346,8 @@ template <class T> constexpr field<T> field<T>::reduce_once() const noexcept
 
 template <class T> constexpr void field<T>::self_reduce_once() & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
         *this = reduce();
     } else {
         if (std::is_constant_evaluated()) {
@@ -703,7 +703,7 @@ template <class T> constexpr field<T> field<T>::tonelli_shanks_sqrt() const noex
 
 template <class T>
 constexpr std::pair<bool, field<T>> field<T>::sqrt() const noexcept
-    requires((T::modulus_0 & 0x3UL) == 0x3UL)
+    requires((T::modulus_uint256.data[0] & 0x3UL) == 0x3UL)
 {
     constexpr uint256_t sqrt_exponent = (modulus + uint256_t(1)) >> 2;
     field root = pow(sqrt_exponent);
@@ -715,7 +715,7 @@ constexpr std::pair<bool, field<T>> field<T>::sqrt() const noexcept
 
 template <class T>
 constexpr std::pair<bool, field<T>> field<T>::sqrt() const noexcept
-    requires((T::modulus_0 & 0x3UL) != 0x3UL)
+    requires((T::modulus_uint256.data[0] & 0x3UL) != 0x3UL)
 {
     field root = tonelli_shanks_sqrt();
     if ((root * root) == (*this)) {
@@ -753,7 +753,7 @@ template <class T> constexpr uint64_t field<T>::is_msb_set_word() const noexcept
 template <class T> constexpr bool field<T>::is_zero() const noexcept
 {
     return ((data[0] | data[1] | data[2] | data[3]) == 0) ||
-           (data[0] == T::modulus_0 && data[1] == T::modulus_1 && data[2] == T::modulus_2 && data[3] == T::modulus_3);
+           (data[0] == T::modulus_uint256.data[0] && data[1] == T::modulus_uint256.data[1] && data[2] == T::modulus_uint256.data[2] && data[3] == T::modulus_uint256.data[3]);
 }
 
 template <class T> constexpr field<T> field<T>::get_root_of_unity(size_t subgroup_size) noexcept

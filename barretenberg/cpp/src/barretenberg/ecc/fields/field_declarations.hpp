@@ -227,8 +227,7 @@ template <class Params_> struct alignas(32) field {
     constexpr ~field() noexcept = default;
     alignas(32) uint64_t data[4]; // NOLINT
 
-    static constexpr uint256_t modulus =
-        uint256_t{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
+    static constexpr uint256_t modulus = Params::modulus_uint256;
     // R^2 mod p — used to convert elements into Montgomery form (multiply by R^2, reduce)
     static constexpr uint256_t r_squared_uint = Params_::r_squared_uint256;
 
@@ -297,10 +296,7 @@ template <class Params_> struct alignas(32) field {
 
     BB_INLINE constexpr field pow(const uint256_t& exponent) const noexcept;
     BB_INLINE constexpr field pow(uint64_t exponent) const noexcept;
-    // STARKNET: next line was commented as stark252 violates the assertion
-    // static_assert(Params::modulus_0 != 1);
-    static constexpr uint256_t modulus_minus_two =
-        uint256_t(Params::modulus_0 - 2ULL, Params::modulus_1, Params::modulus_2, Params::modulus_3);
+    static constexpr uint256_t modulus_minus_two = modulus - uint256_t(2);
     constexpr field invert() const noexcept;
     template <typename C>
     // has size() and operator[].
@@ -317,9 +313,9 @@ template <class Params_> struct alignas(32) field {
      * @return <true, root> if the element is a quadratic remainder, <false, 0> if it's not
      */
     constexpr std::pair<bool, field> sqrt() const noexcept
-        requires((Params_::modulus_0 & 0x3UL) == 0x3UL);
+        requires((Params_::modulus_uint256.data[0] & 0x3UL) == 0x3UL);
     constexpr std::pair<bool, field> sqrt() const noexcept
-        requires((Params_::modulus_0 & 0x3UL) != 0x3UL);
+        requires((Params_::modulus_uint256.data[0] & 0x3UL) != 0x3UL);
     BB_INLINE constexpr void self_neg() & noexcept;
 
     BB_INLINE constexpr void self_to_montgomery_form() & noexcept;
@@ -433,7 +429,7 @@ template <class Params_> struct alignas(32) field {
      */
     static void split_into_endomorphism_scalars(const field& k, field& k1, field& k2)
     {
-        if constexpr (Params::modulus_3 < MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
+        if constexpr (Params::modulus_uint256.data[3] < MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
             // BN254 base or scalar field: use path that corresponds to 128-bit outputs.
             auto ret = split_into_endomorphism_scalars(k);
             k1 = { ret.first[0], ret.first[1], 0, 0 };
@@ -462,7 +458,7 @@ template <class Params_> struct alignas(32) field {
      */
     static std::pair<std::array<uint64_t, 2>, std::array<uint64_t, 2>> split_into_endomorphism_scalars(const field& k)
     {
-        static_assert(Params::modulus_3 < MODULUS_TOP_LIMB_LARGE_THRESHOLD);
+        static_assert(Params::modulus_uint256.data[3] < MODULUS_TOP_LIMB_LARGE_THRESHOLD);
         field t1 = compute_endomorphism_k2(k);
 
         // k2 (= t1) can be slightly negative for ~2^{-64} of inputs.

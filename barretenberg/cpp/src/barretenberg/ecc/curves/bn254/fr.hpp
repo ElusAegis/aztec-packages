@@ -29,26 +29,19 @@ namespace bb {
  */
 class Bn254FrParams {
   public:
-    // A little-endian representation of the modulus split into 4 64-bit words
-    static constexpr uint64_t modulus_0 = 0x43E1F593F0000001UL;
-    static constexpr uint64_t modulus_1 = 0x2833E84879B97091UL;
-    static constexpr uint64_t modulus_2 = 0xB85045B68181585DUL;
-    static constexpr uint64_t modulus_3 = 0x30644E72E131A029UL;
-
-    static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
+    // Little-endian 256-bit modulus: 0x30644E72E131A029B85045B68181585D2833E84879B9709143E1F593F0000001
+    static constexpr uint256_t modulus_uint256{
+        0x43E1F593F0000001UL, 0x2833E84879B97091UL, 0xB85045B68181585DUL, 0x30644E72E131A029UL
+    };
 
     // R^2 mod p, where R = 2^R_EXPONENT. Used to convert elements into Montgomery form.
     static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
 
     // -(p^{-1}) mod 2^64. See field_docs.hpp for Montgomery reduction details.
-    static constexpr uint64_t r_inv = compute_r_inv(modulus_0);
+    static constexpr uint64_t r_inv = compute_r_inv(modulus_uint256.data[0]);
 
     // 2^{-64} mod p. Used in the Yuval/Barrett-Montgomery reduction variant.
     static constexpr uint256_t r_inv_uint256 = compute_div_r_inv(modulus_uint256, 64);
-    static constexpr uint64_t r_inv_0 = r_inv_uint256.data[0];
-    static constexpr uint64_t r_inv_1 = r_inv_uint256.data[1];
-    static constexpr uint64_t r_inv_2 = r_inv_uint256.data[2];
-    static constexpr uint64_t r_inv_3 = r_inv_uint256.data[3];
 
     // Canonical (non-Montgomery) cube root of unity in Fr.
     // Used for the GLV endomorphism: k * P decomposed via lambda (cube root in the scalar field).

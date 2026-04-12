@@ -186,15 +186,14 @@ TYPED_TEST_P(FieldConstantsTest, Modulus)
 {
     using Params = typename TypeParam::Params;
     uint256_t expected = from_decimal(TypeParam::expected_modulus_decimal);
-    uint256_t actual{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-    EXPECT_EQ(expected, actual);
+    EXPECT_EQ(expected, Params::modulus_uint256);
 }
 
 // Verify R^2 mod p is correctly derived from bb::R_EXPONENT
 TYPED_TEST_P(FieldConstantsTest, RSquared)
 {
     using Params = typename TypeParam::Params;
-    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
+    uint256_t mod = Params::modulus_uint256;
     uint256_t expected = compute_r_squared(mod, bb::R_EXPONENT);
     EXPECT_EQ(expected, Params::r_squared_uint256);
 }
@@ -203,7 +202,7 @@ TYPED_TEST_P(FieldConstantsTest, RSquared)
 TYPED_TEST_P(FieldConstantsTest, RSquaredBothPlatforms)
 {
     using Params = typename TypeParam::Params;
-    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
+    uint256_t mod = Params::modulus_uint256;
 
     // Verify R=2^256 path
     uint512_t R256 = (uint512_t(1) << 256) % mod;
@@ -219,7 +218,7 @@ TYPED_TEST_P(FieldConstantsTest, RSquaredBothPlatforms)
 TYPED_TEST_P(FieldConstantsTest, RInv)
 {
     using Params = typename TypeParam::Params;
-    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
+    uint256_t mod = Params::modulus_uint256;
     uint512_t two_64 = uint512_t(1) << 64;
     uint512_t neg_mod{ -mod, 0 };
     uint64_t expected = neg_mod.invmod(two_64).lo.data[0];
@@ -229,13 +228,10 @@ TYPED_TEST_P(FieldConstantsTest, RInv)
 TYPED_TEST_P(FieldConstantsTest, PowMinus64)
 {
     using Params = typename TypeParam::Params;
-    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
+    uint256_t mod = Params::modulus_uint256;
     uint512_t two_64 = uint512_t(1) << 64;
     uint256_t expected = two_64.invmod(mod).lo;
-    EXPECT_EQ(expected.data[0], Params::r_inv_0);
-    EXPECT_EQ(expected.data[1], Params::r_inv_1);
-    EXPECT_EQ(expected.data[2], Params::r_inv_2);
-    EXPECT_EQ(expected.data[3], Params::r_inv_3);
+    EXPECT_EQ(expected, Params::r_inv_uint256);
 }
 
 TYPED_TEST_P(FieldConstantsTest, CubeRootOfUnity)
@@ -270,7 +266,7 @@ TYPED_TEST_P(FieldConstantsTest, CosetGenerator)
 {
     using Params = typename TypeParam::Params;
     using Field = typename TypeParam::Field;
-    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
+    uint256_t mod = Params::modulus_uint256;
     Field coset_gen = Field::coset_generator();
     EXPECT_NE(coset_gen.pow((mod - 1) / 2), Field::one());
 }
@@ -280,7 +276,7 @@ TYPED_TEST_P(FieldConstantsTest, MontgomeryFormDerivation)
 {
     using Params = typename TypeParam::Params;
     using Field = typename TypeParam::Field;
-    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
+    uint256_t mod = Params::modulus_uint256;
 
     // Verify coset_generator: field(canonical) should equal the Montgomery-form uint256_t
     Field coset_from_canonical(Params::canonical_coset_generator);
@@ -293,7 +289,7 @@ TYPED_TEST_P(FieldConstantsTest, MontgomeryFormDerivation)
 TYPED_TEST_P(FieldConstantsTest, WasmModulusConsistency)
 {
     using Params = typename TypeParam::Params;
-    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
+    uint256_t mod = Params::modulus_uint256;
     constexpr auto lc = compute_limb_constants<29, 9>(Params::modulus_uint256);
     uint512_t reconstructed = 0;
     for (size_t i = 0; i < 9; i++) {
@@ -308,7 +304,7 @@ TYPED_TEST_P(FieldConstantsTest, WasmModulusConsistency)
 TYPED_TEST_P(FieldConstantsTest, WasmPowMinus29)
 {
     using Params = typename TypeParam::Params;
-    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
+    uint256_t mod = Params::modulus_uint256;
     constexpr auto lc = compute_limb_constants<29, 9>(Params::modulus_uint256);
     uint512_t r_inv_wasm = 0;
     for (size_t i = 0; i < 9; i++) {

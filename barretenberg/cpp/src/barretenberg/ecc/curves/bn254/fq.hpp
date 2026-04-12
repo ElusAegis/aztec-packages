@@ -28,13 +28,10 @@ namespace bb {
  */
 class Bn254FqParams {
   public:
-    // A little-endian representation of the modulus split into 4 64-bit words
-    static constexpr uint64_t modulus_0 = 0x3C208C16D87CFD47UL;
-    static constexpr uint64_t modulus_1 = 0x97816a916871ca8dUL;
-    static constexpr uint64_t modulus_2 = 0xb85045b68181585dUL;
-    static constexpr uint64_t modulus_3 = 0x30644e72e131a029UL;
-
-    static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
+    // Little-endian 256-bit modulus: 0x30644e72e131a029b85045b68181585d97816a916871ca8d3C208C16D87CFD47
+    static constexpr uint256_t modulus_uint256{
+        0x3C208C16D87CFD47UL, 0x97816a916871ca8dUL, 0xb85045b68181585dUL, 0x30644e72e131a029UL
+    };
 
     // R^2 mod p, where R = 2^R_EXPONENT. Used to convert elements into Montgomery form.
     static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
@@ -42,15 +39,11 @@ class Bn254FqParams {
     // -(p^{-1}) mod 2^64. Used in Montgomery reduction: for each of the lowest four limbs of an
     // 8-limb product, we compute k_i = r_inv * limb_i and add k_i * p to zero out that limb,
     // then divide by 2^256 by taking the upper four limbs. See field_docs.hpp for details.
-    static constexpr uint64_t r_inv = compute_r_inv(modulus_0);
+    static constexpr uint64_t r_inv = compute_r_inv(modulus_uint256.data[0]);
 
     // 2^{-64} mod p. Used in the Yuval/Barrett-Montgomery reduction variant: instead of computing k,
     // we multiply the lowest limb by this value and add to the following limbs.
     static constexpr uint256_t r_inv_uint256 = compute_div_r_inv(modulus_uint256, 64);
-    static constexpr uint64_t r_inv_0 = r_inv_uint256.data[0];
-    static constexpr uint64_t r_inv_1 = r_inv_uint256.data[1];
-    static constexpr uint64_t r_inv_2 = r_inv_uint256.data[2];
-    static constexpr uint64_t r_inv_3 = r_inv_uint256.data[3];
 
     // Canonical (non-Montgomery) cube root of unity in Fq.
     // Used for the GLV endomorphism: lambda * [P] = (beta * x, y) where beta = cube_root.

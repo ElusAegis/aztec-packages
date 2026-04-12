@@ -19,23 +19,14 @@ namespace bb::secp256r1 {
 struct FqParams {
     static constexpr const char* schema_name = "secp256r1_fq";
 
-    // p = 2^256 - 2^224 + 2^192 + 2^96 - 1
-    static constexpr uint64_t modulus_0 = 0xFFFFFFFFFFFFFFFFULL;
-    static constexpr uint64_t modulus_1 = 0x00000000FFFFFFFFULL;
-    static constexpr uint64_t modulus_2 = 0x0000000000000000ULL;
-    static constexpr uint64_t modulus_3 = 0xFFFFFFFF00000001ULL;
-
-    static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
+    // Little-endian 256-bit modulus: p = 2^256 - 2^224 + 2^192 + 2^96 - 1
+    static constexpr uint256_t modulus_uint256{
+        0xFFFFFFFFFFFFFFFFULL, 0x00000000FFFFFFFFULL, 0x0000000000000000ULL, 0xFFFFFFFF00000001ULL
+    };
 
     static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
-
-    static constexpr uint64_t r_inv = compute_r_inv(modulus_0);
-
+    static constexpr uint64_t r_inv = compute_r_inv(modulus_uint256.data[0]);
     static constexpr uint256_t r_inv_uint256 = compute_div_r_inv(modulus_uint256, 64);
-    static constexpr uint64_t r_inv_0 = r_inv_uint256.data[0];
-    static constexpr uint64_t r_inv_1 = r_inv_uint256.data[1];
-    static constexpr uint64_t r_inv_2 = r_inv_uint256.data[2];
-    static constexpr uint64_t r_inv_3 = r_inv_uint256.data[3];
 
     // No cube root of unity exists for secp256r1 Fq (p mod 3 != 1)
     static constexpr uint256_t canonical_cube_root{ 0UL, 0UL, 0UL, 0UL };
@@ -61,22 +52,13 @@ using fq = field<FqParams>;
 struct FrParams {
     static constexpr const char* schema_name = "secp256r1_fr";
 
-    static constexpr uint64_t modulus_0 = 0xF3B9CAC2FC632551ULL;
-    static constexpr uint64_t modulus_1 = 0xBCE6FAADA7179E84ULL;
-    static constexpr uint64_t modulus_2 = 0xFFFFFFFFFFFFFFFFULL;
-    static constexpr uint64_t modulus_3 = 0xFFFFFFFF00000000ULL;
-
-    static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
+    static constexpr uint256_t modulus_uint256{
+        0xF3B9CAC2FC632551ULL, 0xBCE6FAADA7179E84ULL, 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFF00000000ULL
+    };
 
     static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
-
-    static constexpr uint64_t r_inv = compute_r_inv(modulus_0);
-
+    static constexpr uint64_t r_inv = compute_r_inv(modulus_uint256.data[0]);
     static constexpr uint256_t r_inv_uint256 = compute_div_r_inv(modulus_uint256, 64);
-    static constexpr uint64_t r_inv_0 = r_inv_uint256.data[0];
-    static constexpr uint64_t r_inv_1 = r_inv_uint256.data[1];
-    static constexpr uint64_t r_inv_2 = r_inv_uint256.data[2];
-    static constexpr uint64_t r_inv_3 = r_inv_uint256.data[3];
 
     static constexpr uint256_t canonical_cube_root{ 0UL, 0UL, 0UL, 0UL };
     static constexpr uint256_t canonical_primitive_root{ 0UL, 0UL, 0UL, 0UL };

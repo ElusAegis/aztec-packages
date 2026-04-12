@@ -312,7 +312,7 @@ template <typename Builder, typename T> class bigfield {
     bigfield& operator=(bigfield&& other) noexcept;
 
     // Code assumes modulus is at most 256 bits so good to define it via a uint256_t
-    static constexpr uint256_t modulus = (uint256_t(T::modulus_0, T::modulus_1, T::modulus_2, T::modulus_3));
+    static constexpr uint256_t modulus = T::modulus_uint256;
     static constexpr uint512_t modulus_u512 = static_cast<uint512_t>(modulus);
     static constexpr uint64_t NUM_LIMB_BITS = NUM_LIMB_BITS_IN_FIELD_SIMULATION;
     static constexpr uint64_t NUM_LAST_LIMB_BITS = modulus_u512.get_msb() + 1 - (NUM_LIMB_BITS * 3);
