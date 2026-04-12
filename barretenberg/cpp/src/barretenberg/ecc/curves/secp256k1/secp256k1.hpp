@@ -154,11 +154,16 @@ struct FrParams {
 
     static constexpr uint64_t endo_minus_b1_lo = 0x6F547FA90ABFE4C3ULL;
     static constexpr uint64_t endo_minus_b1_mid = 0xE4437ED6010E8828ULL;
+
     static constexpr uint64_t endo_b2_lo = 0xe86c90e49284eb15ULL;
     static constexpr uint64_t endo_b2_mid = 0x3086d221a7d46bcdULL;
+
+    // 256-bit-shift constants: g1 = floor((-b1) * 2^256 / r), g2 = floor(b2 * 2^256 / r)
+    // See endomorphism_scalars.py compute_splitting_constants() for derivation.
     static constexpr uint64_t endo_g1_lo = 0x6F547FA90ABFE4C4ULL;
     static constexpr uint64_t endo_g1_mid = 0xE4437ED6010E8828ULL;
     static constexpr uint64_t endo_g1_hi = 0x0ULL;
+
     static constexpr uint64_t endo_g2_lo = 0xE86C90E49284EB15ULL;
     static constexpr uint64_t endo_g2_mid = 0x3086D221A7D46BCDULL;
 
@@ -202,6 +207,8 @@ struct G1Params {
 };
 using g1 = group<fq, fr, G1Params>;
 
+// specialize the name in msgpack schema generation
+// consumed by the typescript schema compiler, helps disambiguate templates
 inline std::string msgpack_schema_name(g1::affine_element const& /*unused*/)
 {
     return "Secp256k1Point";

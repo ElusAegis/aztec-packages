@@ -15,8 +15,24 @@ namespace bb {
 /**
  * @brief The twelfth degree extension of the base field of BN254
  *
- * @details Fq12 is defined as Fq6[w] / (w^2 - v). Frobenius coefficients stored in canonical form,
- * auto-converted to Montgomery form via the fq(uint256_t) constructor.
+ * @details Fq12 is defined as Fq6[w] / (w^2 - v), where v is the variable added to Fq2 to construct Fq6. We store in
+ * the struct the coefficients to compute the frobenius morphism (we need powers up to q^3 to compute the final
+ * exponentiation in the pairing calculation)
+ * 1. Power q
+ * \f[
+ *     (a + bw)^q = a^q + b^q * w^q = a^q + b^q * \xi^{(q-1)/6} * v
+ * \f]
+ * 2. Power q^2
+ * \f[
+ *     (a + bw)^{q^2} = a^{q^2} + b^{q^2} * w^{q^2} = a + b * \xi^{(q^2-1)/6} * v
+ * \f]
+ * 3. Power q^3
+ * \f[
+ *     (a + bw)^{q^3} = a^{q^3} + b^{q^3} * w^{q^3} = a^q + b^q * \xi^{(q^3-1)/6} * v
+ * \f]
+ *
+ * Constants are stored in canonical (non-Montgomery) form and converted to Montgomery form via the fq(uint256_t)
+ * constructor.
  */
 struct Bn254Fq12Params {
 

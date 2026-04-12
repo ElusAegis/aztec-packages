@@ -36,14 +36,12 @@ class Bn254FqParams {
 
     static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
 
-    // R exponent: defines the Montgomery domain
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
     static constexpr unsigned R_EXPONENT = 256;
 #else
     static constexpr unsigned R_EXPONENT = 261;
 #endif
 
-    // R^2 mod p, auto-derived
     static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, R_EXPONENT);
     static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
     static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
@@ -72,7 +70,6 @@ class Bn254FqParams {
         0x0000000000000003UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL
     };
 
-    // Montgomery-form constants auto-derived
     static constexpr uint256_t cube_root_mont = to_montgomery_uint256(canonical_cube_root, modulus_uint256, R_EXPONENT);
     static constexpr uint64_t cube_root_0 = cube_root_mont.data[0];
     static constexpr uint64_t cube_root_1 = cube_root_mont.data[1];
@@ -113,7 +110,8 @@ class Bn254FqParams {
     static constexpr uint64_t r_inv_wasm_7 = 0xb8bab0f;
     static constexpr uint64_t r_inv_wasm_8 = 0x6d7c4;
 
-    // Parameters used for quickly splitting a scalar into two endomorphism scalars
+    // Parameters used for quickly splitting a scalar into two endomorphism scalars for faster scalar multiplication
+    // For specifics on how these have been derived, see ecc/fields/endomorphim_scalars.py
     static constexpr uint64_t endo_g1_lo = 0x7a7bd9d4391eb18d;
     static constexpr uint64_t endo_g1_mid = 0x4ccef014a773d2cfUL;
     static constexpr uint64_t endo_g1_hi = 0x0000000000000002UL;

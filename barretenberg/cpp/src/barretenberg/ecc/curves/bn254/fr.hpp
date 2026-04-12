@@ -37,14 +37,13 @@ class Bn254FrParams {
 
     static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
 
-    // R exponent: defines the Montgomery domain. Native uses R=2^256, WASM uses R=2^261 (=29*9 bits).
+    // Native uses R=2^256, WASM uses R=2^261 (= 29*9 bits)
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
     static constexpr unsigned R_EXPONENT = 256;
 #else
     static constexpr unsigned R_EXPONENT = 261;
 #endif
 
-    // R^2 mod p, auto-derived from modulus and R_EXPONENT
     static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, R_EXPONENT);
     static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
     static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
@@ -54,7 +53,7 @@ class Bn254FrParams {
     // -(Modulus^-1) mod 2^64
     static constexpr uint64_t r_inv = 0xc2e1f593efffffffUL;
 
-    // 2^(-64) mod Modulus — used in native WASM-like reduction path
+    // 2^(-64) mod Modulus
     static constexpr uint64_t r_inv_0 = 0x2d3e8053e396ee4dUL;
     static constexpr uint64_t r_inv_1 = 0xca478dbeab3c92cdUL;
     static constexpr uint64_t r_inv_2 = 0xb2d8f06f77f52a93UL;
@@ -75,7 +74,6 @@ class Bn254FrParams {
         0x0000000000000005UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL
     };
 
-    // Montgomery-form constants auto-derived from canonicals + R_EXPONENT
     static constexpr uint256_t cube_root_mont = to_montgomery_uint256(canonical_cube_root, modulus_uint256, R_EXPONENT);
     static constexpr uint64_t cube_root_0 = cube_root_mont.data[0];
     static constexpr uint64_t cube_root_1 = cube_root_mont.data[1];

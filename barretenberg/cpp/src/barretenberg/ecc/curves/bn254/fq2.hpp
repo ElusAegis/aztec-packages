@@ -17,8 +17,17 @@ namespace bb {
  * @details The quadratic extension Fq2 is defined as Fq[u] / (u^2 + 1). Fq2 is the base field of
  * the twist of BN254, thus points in G2 have coordinates in Fq2.
  *
- * Constants are stored in canonical (non-Montgomery) form and auto-converted to Montgomery form
- * via the fq(uint256_t) constructor, which calls to_montgomery_form() using the platform-specific R.
+ * Inside this struct we define the parameters of the twist:
+ * - the coefficient twist_b = 3 / (9 + u) defining the equation of the twist: y^2 = x^3 + twist_b. The coefficient is
+ *   derived as b / \xi, where b = 3 is the coefficient of BN254 in short-Weierstrass form, and \xi = 9 + u is not a
+ *   sixth residue in Fq2.
+ * - the coefficients required to compute the frobenius map on the twisted curve: if \Psi : E' --> E is the isomorphism
+ *   between the twist E' and the base curve E, then the frobenius map on E' is \Psi^{-1} \circ Frobenius \circ \Psi.
+ *   This map is given by (x, y) --> (\xi^{(q-1)/3} * x^q, \xi^{(q-1)/2}} * y^q). We precompute the two powers of \xi
+ *   and store them as frobenius_on_twisted_curve_x and frobenius_on_twisted_curve_y.
+ *
+ * Constants are stored in canonical (non-Montgomery) form and converted to Montgomery form via the fq(uint256_t)
+ * constructor.
  */
 struct Bn254Fq2Params {
     static constexpr fq twist_coeff_b_0 =

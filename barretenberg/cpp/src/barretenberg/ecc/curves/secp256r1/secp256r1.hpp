@@ -13,6 +13,9 @@
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays)
 namespace bb::secp256r1 {
 
+/**
+ * @brief Parameters defining the base field of the secp256r1 curve.
+ */
 struct FqParams {
     static constexpr const char* schema_name = "secp256r1_fq";
 
@@ -89,6 +92,9 @@ struct FqParams {
 };
 using fq = field<FqParams>;
 
+/**
+ * @brief Parameters defining the scalar field of the secp256r1 curve.
+ */
 struct FrParams {
     static constexpr const char* schema_name = "secp256r1_fr";
 
@@ -182,6 +188,8 @@ struct G1Params {
 };
 using g1 = group<fq, fr, G1Params>;
 
+// specialize the name in msgpack schema generation
+// consumed by the typescript schema compiler, helps disambiguate templates
 inline std::string msgpack_schema_name(g1::affine_element const& /*unused*/)
 {
     return "Secp256r1Point";

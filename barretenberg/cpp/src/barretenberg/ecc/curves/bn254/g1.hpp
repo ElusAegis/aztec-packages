@@ -16,7 +16,7 @@ struct Bn254G1Params {
     static constexpr bool can_hash_to_curve = true;
     static constexpr bool has_a = false;
 
-    // Generator = (1, 2), b = 3 — canonical values, auto-converted to Montgomery form
+    // Generator = (1, sqrt(4)) = (1, 2)
     static constexpr fq one_x = fq::one();
     static constexpr fq one_y = fq(2);
     static constexpr fq a{ 0UL, 0UL, 0UL, 0UL };

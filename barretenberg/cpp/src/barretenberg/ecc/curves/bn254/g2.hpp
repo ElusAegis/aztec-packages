@@ -16,7 +16,6 @@ struct Bn254G2Params {
     static constexpr bool can_hash_to_curve = false;
     static constexpr bool has_a = false;
 
-    // Canonical (non-Montgomery) point coordinates, auto-converted to Montgomery form via fq constructor
     static constexpr fq2 one_x{
         fq(uint256_t{ 0x46DEBD5CD992F6EDUL, 0x674322D4F75EDADDUL, 0x426A00665E5C4479UL, 0x1800DEEF121F1E76UL }),
         fq(uint256_t{ 0x97E485B7AEF312C2UL, 0xF1AA493335A9E712UL, 0x7260BFB731FB5D25UL, 0x198E9393920D483AUL })

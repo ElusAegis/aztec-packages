@@ -15,8 +15,26 @@ namespace bb {
 /**
  * @brief Sextic extension of the base field of BN254
  *
- * @details Fq6 is defined as Fq2[v] / (v^3 - xi), where xi = 9 + u is not a cubic residue in Fq2.
- * Frobenius coefficients stored in canonical form, auto-converted to Montgomery form.
+ * @details Fq6 is defined as Fq2[v] / (v^3 - \xi), where \xi = 9 + u is not a cubic residue in Fq2. We store in the
+ * struct the coefficients to compute the frobenius morphism (we need powers up to q^3 to compute the final
+ * exponentiation in the pairing calculation)
+ * 1. Power q
+ * \f[
+ *  (a + bv + cv^2)^q = a^q + b^q * v^q + c^q * v^{2q} = a^q + b^q * \xi^{(q-1)/3} * v + c^q * \xi^{2(q-1)/3} * v^2
+ * \f]
+ * 2. Power q^2
+ * \f[
+ *  (a + bv + cv^2)^{q^2} = a^{q^2} + b^{q^2} * v^{q^2} + c^{q^2} * v^{2q^2} =
+ *                                  a + b * \xi^{(q^2-1)/3} * v + c * \xi^{2(q^2-1)/3} * v^2
+ * \f]
+ * 3. Power q^3
+ * \f[
+ *  (a + bv + cv^2)^{q^3} = a^{q^3} + b^{q^3} * v^{q^3} + c^{q^3} * v^{2q^3} =
+ *                                  a^q + b^q * \xi^{(q^3-1)/3} * v + c^q * \xi^{2(q^3-1)/3} * v^2
+ * \f]
+ *
+ * Constants are stored in canonical (non-Montgomery) form and converted to Montgomery form via the fq(uint256_t)
+ * constructor.
  */
 struct Bn254Fq6Params {
 

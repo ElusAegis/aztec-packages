@@ -233,7 +233,6 @@ template <class Params_> struct alignas(32) field {
 
     static constexpr uint256_t modulus =
         uint256_t{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-    // r_squared is now auto-derived from R_EXPONENT in each param struct — no native/wasm branching needed
     static constexpr uint256_t r_squared_uint{
         Params_::r_squared_0, Params_::r_squared_1, Params_::r_squared_2, Params_::r_squared_3
     };
@@ -248,8 +247,6 @@ template <class Params_> struct alignas(32) field {
         Params::r_inv_wasm_5, Params::r_inv_wasm_6, Params::r_inv_wasm_7, Params::r_inv_wasm_8
     };
 #endif
-    // cube_root, coset_generator, primitive_root are now auto-derived in Montgomery form
-    // from canonical values + R_EXPONENT in each param struct — no native/wasm branching needed
     static constexpr field cube_root_of_unity()
     {
         if constexpr (Params::cube_root_0 != 0) {

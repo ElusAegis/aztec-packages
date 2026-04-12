@@ -8,7 +8,7 @@
  *   - has_cube_root:             whether a meaningful cube root of unity exists in this field
  *   - has_primitive_root:        whether a high-2-adicity primitive root of unity is used
  *
- * Tests cover the auto-derived Montgomery constants and WASM (29-bit limb) representations.
+ * Tests cover native (64-bit limb) and WASM (29-bit limb) representations of all constants.
  *
  * Fields tested:
  *   - BN254:     Fq (base field), Fr (scalar field)
@@ -45,6 +45,8 @@ uint256_t from_decimal(const std::string& dec_str)
 struct Bn254FqTestConfig {
     using Params = Bn254FqParams;
     using Field = bb::fq;
+    // BN254 base field prime q
+    // References: https://eips.ethereum.org/EIPS/eip-196, https://hackmd.io/@jpw/bn254
     static constexpr const char* expected_modulus_decimal =
         "21888242871839275222246405745257275088696311157297823662689037894645226208583";
     static constexpr bool has_cube_root = true;
@@ -54,6 +56,8 @@ struct Bn254FqTestConfig {
 struct Bn254FrTestConfig {
     using Params = Bn254FrParams;
     using Field = bb::fr;
+    // BN254 scalar field prime r (also Baby Jubjub base field)
+    // References: https://eips.ethereum.org/EIPS/eip-196, https://hackmd.io/@jpw/bn254
     static constexpr const char* expected_modulus_decimal =
         "21888242871839275222246405745257275088548364400416034343698204186575808495617";
     static constexpr bool has_cube_root = true;
@@ -63,6 +67,8 @@ struct Bn254FrTestConfig {
 struct Secp256k1FqTestConfig {
     using Params = secp256k1::FqParams;
     using Field = secp256k1::fq;
+    // secp256k1 base field prime p = 2^256 - 2^32 - 977
+    // Reference: https://www.secg.org/sec2-v2.pdf
     static constexpr const char* expected_modulus_decimal =
         "115792089237316195423570985008687907853269984665640564039457584007908834671663";
     static constexpr bool has_cube_root = true;
@@ -72,6 +78,8 @@ struct Secp256k1FqTestConfig {
 struct Secp256k1FrTestConfig {
     using Params = secp256k1::FrParams;
     using Field = secp256k1::fr;
+    // secp256k1 scalar field order
+    // Reference: https://www.secg.org/sec2-v2.pdf
     static constexpr const char* expected_modulus_decimal =
         "115792089237316195423570985008687907852837564279074904382605163141518161494337";
     static constexpr bool has_cube_root = true;
@@ -81,6 +89,8 @@ struct Secp256k1FrTestConfig {
 struct Secp256r1FqTestConfig {
     using Params = secp256r1::FqParams;
     using Field = secp256r1::fq;
+    // secp256r1 (P-256) base field prime p = 2^256 - 2^224 + 2^192 + 2^96 - 1
+    // Reference: https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-4.pdf
     static constexpr const char* expected_modulus_decimal =
         "115792089210356248762697446949407573530086143415290314195533631308867097853951";
     static constexpr bool has_cube_root = false;
@@ -90,6 +100,8 @@ struct Secp256r1FqTestConfig {
 struct Secp256r1FrTestConfig {
     using Params = secp256r1::FrParams;
     using Field = secp256r1::fr;
+    // secp256r1 (P-256) scalar field order
+    // Reference: https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-4.pdf
     static constexpr const char* expected_modulus_decimal =
         "115792089210356248762697446949407573529996955224135760342422259061068512044369";
     static constexpr bool has_cube_root = false;
