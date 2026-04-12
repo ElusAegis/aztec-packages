@@ -16,21 +16,7 @@ static constexpr uint64_t compute_r_inv(uint64_t p0)
     return -x;
 }
 
-// Constexpr modular doubling: returns (2 * a) mod p, handling overflow.
-// Precondition: a < p.
-static constexpr uint256_t mod_dbl(const uint256_t& a, const uint256_t& p)
-{
-    bool msb = (a.data[3] >> 63) != 0;
-    uint256_t doubled = a + a; // wraps mod 2^256
-    // If the MSB was set before doubling, the true result is doubled + 2^256, which is certainly >= p.
-    // Also check if the (wrapped) doubled value >= p.
-    if (msb || doubled >= p) {
-        doubled = doubled - p;
-    }
-    return doubled;
-}
-
-// Constexpr modular addition: returns (a + b) mod p, handling overflow.
+// Constexpr modular addition: returns (a + b) mod p, handling 256-bit overflow.
 // Precondition: a < p, b < p.
 static constexpr uint256_t mod_add(const uint256_t& a, const uint256_t& b, const uint256_t& p)
 {
@@ -48,12 +34,9 @@ static constexpr uint256_t mod_add(const uint256_t& a, const uint256_t& b, const
 // by doubling hi_reduced 256 times, then adding lo.
 static constexpr uint256_t wide_mod(uint256_t hi, uint256_t lo, const uint256_t& p)
 {
-    // Reduce hi mod p (hi may be >= p for large moduli)
     while (hi >= p) {
         hi = hi - p;
     }
-
-    // Reduce lo mod p
     while (lo >= p) {
         lo = lo - p;
     }
@@ -61,11 +44,17 @@ static constexpr uint256_t wide_mod(uint256_t hi, uint256_t lo, const uint256_t&
     // Compute hi * 2^256 mod p by 256 modular doublings
     uint256_t acc = hi;
     for (unsigned i = 0; i < 256; ++i) {
-        acc = mod_dbl(acc, p);
+        acc = mod_add(acc, acc, p);
     }
 
-    // Add lo
     return mod_add(acc, lo, p);
+}
+
+// Constexpr modular multiplication: (a * b) mod p using 512-bit intermediate.
+static constexpr uint256_t mod_mul(const uint256_t& a, const uint256_t& b, const uint256_t& p)
+{
+    auto [lo, hi] = a.mul_extended(b);
+    return wide_mod(hi, lo, p);
 }
 
 // 2^r_exponent mod p via repeated modular doubling.
@@ -73,7 +62,7 @@ static constexpr uint256_t pow2_mod(const uint256_t& p, unsigned r_exponent)
 {
     uint256_t acc(1);
     for (unsigned i = 0; i < r_exponent; ++i) {
-        acc = mod_dbl(acc, p);
+        acc = mod_add(acc, acc, p);
     }
     return acc;
 }
@@ -82,12 +71,10 @@ static constexpr uint256_t pow2_mod(const uint256_t& p, unsigned r_exponent)
 static constexpr uint256_t compute_r_squared(const uint256_t& modulus, unsigned r_exponent)
 {
     uint256_t R_mod_p = pow2_mod(modulus, r_exponent);
-    auto [lo, hi] = R_mod_p.mul_extended(R_mod_p);
-    return wide_mod(hi, lo, modulus);
+    return mod_mul(R_mod_p, R_mod_p, modulus);
 }
 
 // Split uint256_t into NUM_LIMBS limbs of LIMB_BITS bits each (little-endian).
-// Uses position-based extraction to avoid accumulator overflow.
 // When LIMB_BITS == 64, each limb is exactly one word (no masking/spanning needed).
 template <unsigned LIMB_BITS, unsigned NUM_LIMBS>
 static constexpr std::array<uint64_t, NUM_LIMBS> split_limbs(const uint256_t& v)
@@ -106,7 +93,6 @@ static constexpr std::array<uint64_t, NUM_LIMBS> split_limbs(const uint256_t& v)
             unsigned word_lo = bit_pos / 64;
             unsigned shift_lo = bit_pos % 64;
             uint64_t val = v.data[word_lo] >> shift_lo;
-            // If the limb spans a 64-bit word boundary, OR in bits from the next word
             if (shift_lo + LIMB_BITS > 64 && word_lo + 1 < 4) {
                 val |= v.data[word_lo + 1] << (64 - shift_lo);
             }
@@ -118,26 +104,16 @@ static constexpr std::array<uint64_t, NUM_LIMBS> split_limbs(const uint256_t& v)
 
 // Compute 2^{-LIMB_BITS} mod p by repeated halving.
 // "Halve mod p" means: if odd, add p first (making it even), then right-shift by 1.
-// We need to handle the 257-bit carry when adding p to an odd value.
+// The addition can overflow 256 bits, so we track the 257th bit as `carry`.
 static constexpr uint256_t compute_div_r_inv(const uint256_t& p, unsigned limb_bits)
 {
     uint256_t result(1);
     for (unsigned i = 0; i < limb_bits; ++i) {
         uint64_t carry = 0;
         if ((result.data[0] & 1) != 0) {
-            // Add p, tracking 257-bit carry via manual carry chain
-            uint64_t s0 = result.data[0] + p.data[0];
-            uint64_t c0 = (s0 < result.data[0]) ? 1ULL : 0ULL;
-            uint64_t s1 = result.data[1] + p.data[1] + c0;
-            uint64_t c1 = (c0 != 0) ? ((s1 <= result.data[1]) ? 1ULL : 0ULL)
-                                     : ((s1 < result.data[1]) ? 1ULL : 0ULL);
-            uint64_t s2 = result.data[2] + p.data[2] + c1;
-            uint64_t c2 = (c1 != 0) ? ((s2 <= result.data[2]) ? 1ULL : 0ULL)
-                                     : ((s2 < result.data[2]) ? 1ULL : 0ULL);
-            uint64_t s3 = result.data[3] + p.data[3] + c2;
-            carry = (c2 != 0) ? ((s3 <= result.data[3]) ? 1ULL : 0ULL)
-                              : ((s3 < result.data[3]) ? 1ULL : 0ULL);
-            result = uint256_t(s0, s1, s2, s3);
+            uint256_t sum = result + p;
+            carry = (sum < result) ? 1ULL : 0ULL;
+            result = sum;
         }
         // Right-shift by 1, feeding carry into bit 255
         result = uint256_t((result.data[0] >> 1) | (result.data[1] << 63),
@@ -180,9 +156,7 @@ static constexpr uint256_t to_montgomery_uint256(const uint256_t& canonical,
                                                  const uint256_t& modulus,
                                                  unsigned r_exponent)
 {
-    uint256_t R_mod_p = pow2_mod(modulus, r_exponent);
-    auto [lo, hi] = canonical.mul_extended(R_mod_p);
-    return wide_mod(hi, lo, modulus);
+    return mod_mul(canonical, pow2_mod(modulus, r_exponent), modulus);
 }
 
 // Convenience: compute limb constants using the platform R configuration.
