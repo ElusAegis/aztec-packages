@@ -24,24 +24,17 @@ struct G1Params {
     static constexpr bool USE_ENDOMORPHISM = true;
     static constexpr bool can_hash_to_curve = true;
     static constexpr bool has_a = false;
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    static constexpr bb::fr b{ 0xdd7056026000005a, 0x223fa97acb319311, 0xcc388229877910c0, 0x34394632b724eaa };
-#else
-    static constexpr bb::fr b{ 0x2646d52420000b3eUL, 0xf78d5ec872bf8119UL, 0x166fb9c3ec1f6749UL, 0x7a9ef7fabe69506UL };
-#endif
+
+    // Grumpkin: y^2 = x^3 - 17. Canonical b = p - 17 (for BN254 Fr modulus p).
+    // Canonical one_y: sqrt(-16) on Grumpkin. Auto-converted to Montgomery form via fr constructor.
+    static constexpr bb::fr b =
+        bb::fr(uint256_t{ 0x43E1F593EFFFFFF0UL, 0x2833E84879B97091UL, 0xB85045B68181585DUL, 0x30644E72E131A029UL });
     static constexpr bb::fr a{ 0UL, 0UL, 0UL, 0UL };
 
-    // generator point = (x, y) = (1, sqrt(-16)) = (1, -4i)
+    // generator point = (x, y) = (1, sqrt(-16))
     static constexpr bb::fr one_x = bb::fr::one();
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    static constexpr bb::fr one_y{
-        0x11b2dff1448c41d8UL, 0x23d3446f21c77dc3UL, 0xaa7b8cf435dfafbbUL, 0x14b34cf69dc25d68UL
-    };
-#else
-    static constexpr bb::fr one_y{
-        0xc3e285a561883af3UL, 0x6fc5c2360a850101UL, 0xf35e144228647aa9UL, 0x2151a2fe48c68af6UL
-    };
-#endif
+    static constexpr bb::fr one_y =
+        bb::fr(uint256_t{ 0x833FC48D823F272CUL, 0x2D270D45F1181294UL, 0xCF135E7506A45D63UL, 0x0000000000000002UL });
 };
 using g1 = bb::group<bb::fr, bb::fq, G1Params>;
 
@@ -66,21 +59,11 @@ class Grumpkin {
     static constexpr const char* name = "Grumpkin";
     static constexpr bool is_stdlib_type = false;
 
-    // Required by SmallSubgroupIPA argument. This constant needs to divide the size of the multiplicative subgroup of
-    // the ScalarField and satisfy SUBGROUP_SIZE > CONST_PROOF_SIZE_LOG_N * 3, since in every round of Sumcheck, the
-    // prover sends 3 elements to the verifier.
     static constexpr size_t SUBGROUP_SIZE = 87;
-    // The generator below was derived by factoring r - 1 into primes, where r is the modulus of the Grumkin scalar
-    // field. A random field element was sampled and raised to the power (r - 1) / (3 * 29). We verified that the
-    // resulting element does not generate a smaller subgroup by further raising it to the powers of 3 and 29. To
-    // optimize the recursive verifier and avoid costly inversions, we also precompute and store its inverse.
     static constexpr ScalarField subgroup_generator =
         ScalarField(uint256_t("0x147c647c09fb639514909e9f0513f31ec1a523bf8a0880bc7c24fbc962a9586b"));
     static constexpr ScalarField subgroup_generator_inverse =
         ScalarField("0x0c68e27477b5e78cfab790bd3b59806fa871771f71ec7452cde5384f6e3a1988");
-    // The length of the polynomials used to mask the Sumcheck Round Univariates. In the ECCVM Sumcheck, the prover only
-    // sends 3 elements in every round - a commitment to the round univariate and its evaluations at 0 and 1. Therefore,
-    // length 3 is sufficient.
     static constexpr uint32_t LIBRA_UNIVARIATES_LENGTH = 3;
 };
 } // namespace bb::curve

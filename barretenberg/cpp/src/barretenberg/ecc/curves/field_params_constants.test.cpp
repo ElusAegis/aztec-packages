@@ -8,7 +8,7 @@
  *   - has_cube_root:             whether a meaningful cube root of unity exists in this field
  *   - has_primitive_root:        whether a high-2-adicity primitive root of unity is used
  *
- * Tests cover native (64-bit limb) and WASM (29-bit limb) representations of all constants.
+ * Tests cover the auto-derived Montgomery constants and WASM (29-bit limb) representations.
  *
  * Fields tested:
  *   - BN254:     Fq (base field), Fr (scalar field)
@@ -22,6 +22,7 @@
 #include "barretenberg/ecc/curves/bn254/fr.hpp"
 #include "barretenberg/ecc/curves/secp256k1/secp256k1.hpp"
 #include "barretenberg/ecc/curves/secp256r1/secp256r1.hpp"
+#include "barretenberg/ecc/fields/field_constexpr_helpers.hpp"
 #include "barretenberg/numeric/random/engine.hpp"
 #include "barretenberg/numeric/uint256/uint256.hpp"
 #include <array>
@@ -32,7 +33,6 @@ using namespace bb;
 
 namespace {
 
-// Helper to convert a decimal string to uint256_t.
 uint256_t from_decimal(const std::string& dec_str)
 {
     uint256_t result = 0;
@@ -42,16 +42,9 @@ uint256_t from_decimal(const std::string& dec_str)
     return result;
 }
 
-// ============================================================
-// Config structs — one per field, providing expected constants
-// and feature flags that control which tests are exercised.
-// ============================================================
-
 struct Bn254FqTestConfig {
     using Params = Bn254FqParams;
     using Field = bb::fq;
-    // BN254 base field prime q
-    // References: https://eips.ethereum.org/EIPS/eip-196, https://hackmd.io/@jpw/bn254
     static constexpr const char* expected_modulus_decimal =
         "21888242871839275222246405745257275088696311157297823662689037894645226208583";
     static constexpr bool has_cube_root = true;
@@ -61,8 +54,6 @@ struct Bn254FqTestConfig {
 struct Bn254FrTestConfig {
     using Params = Bn254FrParams;
     using Field = bb::fr;
-    // BN254 scalar field prime r (also Baby Jubjub base field)
-    // References: https://eips.ethereum.org/EIPS/eip-196, https://hackmd.io/@jpw/bn254
     static constexpr const char* expected_modulus_decimal =
         "21888242871839275222246405745257275088548364400416034343698204186575808495617";
     static constexpr bool has_cube_root = true;
@@ -72,8 +63,6 @@ struct Bn254FrTestConfig {
 struct Secp256k1FqTestConfig {
     using Params = secp256k1::FqParams;
     using Field = secp256k1::fq;
-    // secp256k1 base field prime p = 2^256 - 2^32 - 977
-    // Reference: https://www.secg.org/sec2-v2.pdf
     static constexpr const char* expected_modulus_decimal =
         "115792089237316195423570985008687907853269984665640564039457584007908834671663";
     static constexpr bool has_cube_root = true;
@@ -83,8 +72,6 @@ struct Secp256k1FqTestConfig {
 struct Secp256k1FrTestConfig {
     using Params = secp256k1::FrParams;
     using Field = secp256k1::fr;
-    // secp256k1 scalar field order
-    // Reference: https://www.secg.org/sec2-v2.pdf
     static constexpr const char* expected_modulus_decimal =
         "115792089237316195423570985008687907852837564279074904382605163141518161494337";
     static constexpr bool has_cube_root = true;
@@ -94,8 +81,6 @@ struct Secp256k1FrTestConfig {
 struct Secp256r1FqTestConfig {
     using Params = secp256r1::FqParams;
     using Field = secp256r1::fq;
-    // secp256r1 (P-256) base field prime p = 2^256 - 2^224 + 2^192 + 2^96 - 1
-    // Reference: https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-4.pdf
     static constexpr const char* expected_modulus_decimal =
         "115792089210356248762697446949407573530086143415290314195533631308867097853951";
     static constexpr bool has_cube_root = false;
@@ -105,8 +90,6 @@ struct Secp256r1FqTestConfig {
 struct Secp256r1FrTestConfig {
     using Params = secp256r1::FrParams;
     using Field = secp256r1::fr;
-    // secp256r1 (P-256) scalar field order
-    // Reference: https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-4.pdf
     static constexpr const char* expected_modulus_decimal =
         "115792089210356248762697446949407573529996955224135760342422259061068512044369";
     static constexpr bool has_cube_root = false;
@@ -115,15 +98,10 @@ struct Secp256r1FrTestConfig {
 
 } // namespace
 
-// ============================================================
-// Typed test fixture
-// ============================================================
-
 template <typename Config> class FieldConstantsTest : public testing::Test {};
 
 TYPED_TEST_SUITE_P(FieldConstantsTest);
 
-// Verify that the 4 x 64-bit limbs reconstruct to the expected modulus.
 TYPED_TEST_P(FieldConstantsTest, Modulus)
 {
     using Params = typename TypeParam::Params;
@@ -132,18 +110,33 @@ TYPED_TEST_P(FieldConstantsTest, Modulus)
     EXPECT_EQ(expected, actual);
 }
 
-// Verify R^2 mod p, where R = 2^256, stored in r_squared_{0-3}.
+// Verify R^2 mod p is correctly derived from R_EXPONENT
 TYPED_TEST_P(FieldConstantsTest, RSquared)
 {
     using Params = typename TypeParam::Params;
     uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-    uint512_t R = (uint512_t(1) << 256) % mod;
-    uint512_t expected = (R * R) % mod;
+    uint256_t expected = compute_r_squared(mod, Params::R_EXPONENT);
     uint256_t actual{ Params::r_squared_0, Params::r_squared_1, Params::r_squared_2, Params::r_squared_3 };
-    EXPECT_EQ(expected.lo, actual);
+    EXPECT_EQ(expected, actual);
 }
 
-// Verify r_inv = -(modulus^{-1}) mod 2^64, used for Montgomery reduction.
+// Also verify R^2 for both R=256 and R=261 are correct (cross-platform validation)
+TYPED_TEST_P(FieldConstantsTest, RSquaredBothPlatforms)
+{
+    using Params = typename TypeParam::Params;
+    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
+
+    // Verify R=2^256 path
+    uint512_t R256 = (uint512_t(1) << 256) % mod;
+    uint256_t r_sq_256 = ((R256 * R256) % mod).lo;
+    EXPECT_EQ(r_sq_256, compute_r_squared(mod, 256));
+
+    // Verify R=2^261 path
+    uint512_t R261 = (uint512_t(1) << 261) % mod;
+    uint256_t r_sq_261 = ((R261 * R261) % mod).lo;
+    EXPECT_EQ(r_sq_261, compute_r_squared(mod, 261));
+}
+
 TYPED_TEST_P(FieldConstantsTest, RInv)
 {
     using Params = typename TypeParam::Params;
@@ -154,7 +147,6 @@ TYPED_TEST_P(FieldConstantsTest, RInv)
     EXPECT_EQ(Params::r_inv, expected);
 }
 
-// Verify r_inv_{0-3} = 2^{-64} mod p, used in the Barrett-Montgomery reduction.
 TYPED_TEST_P(FieldConstantsTest, PowMinus64)
 {
     using Params = typename TypeParam::Params;
@@ -167,7 +159,6 @@ TYPED_TEST_P(FieldConstantsTest, PowMinus64)
     EXPECT_EQ(expected.data[3], Params::r_inv_3);
 }
 
-// Verify that beta = cube_root_of_unity() satisfies beta^3 = 1 and beta != 1.
 TYPED_TEST_P(FieldConstantsTest, CubeRootOfUnity)
 {
     if constexpr (!TypeParam::has_cube_root) {
@@ -180,7 +171,6 @@ TYPED_TEST_P(FieldConstantsTest, CubeRootOfUnity)
     }
 }
 
-// Verify that get_root_of_unity(order) is a primitive 2^order root of unity.
 TYPED_TEST_P(FieldConstantsTest, PrimitiveRootOfUnity)
 {
     if constexpr (!TypeParam::has_primitive_root) {
@@ -189,17 +179,14 @@ TYPED_TEST_P(FieldConstantsTest, PrimitiveRootOfUnity)
         using Field = typename TypeParam::Field;
         size_t order = Field::primitive_root_log_size();
         Field root = Field::get_root_of_unity(order);
-        // root^{2^i} != 1 for all 0 <= i < order
         for (size_t i = 0; i < order; i++) {
             EXPECT_NE(root, Field::one());
             root = root.sqr();
         }
-        // root^{2^order} = 1
         EXPECT_EQ(root, Field::one());
     }
 }
 
-// Verify that coset_generator() is not a quadratic residue mod p, i.e. coset_gen^{(p-1)/2} != 1.
 TYPED_TEST_P(FieldConstantsTest, CosetGenerator)
 {
     using Params = typename TypeParam::Params;
@@ -209,12 +196,21 @@ TYPED_TEST_P(FieldConstantsTest, CosetGenerator)
     EXPECT_NE(coset_gen.pow((mod - 1) / 2), Field::one());
 }
 
-// ============================================================
-// WASM consistency tests (9 x 29-bit limb representation)
-// ============================================================
+// Verify Montgomery-form constants are correctly derived from canonical values
+TYPED_TEST_P(FieldConstantsTest, MontgomeryFormDerivation)
+{
+    using Params = typename TypeParam::Params;
+    using Field = typename TypeParam::Field;
+    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
 
-// Verify that the 9 x 29-bit WASM limbs reconstruct to the same modulus as the 4 x 64-bit limbs,
-// and that each limb fits in 29 bits.
+    // Verify coset_generator: field(canonical) should equal the Montgomery-form constant
+    Field coset_from_canonical(Params::canonical_coset_generator);
+    Field coset_from_limbs{
+        Params::coset_generator_0, Params::coset_generator_1, Params::coset_generator_2, Params::coset_generator_3
+    };
+    EXPECT_EQ(coset_from_canonical, coset_from_limbs);
+}
+
 TYPED_TEST_P(FieldConstantsTest, WasmModulusConsistency)
 {
     using Params = typename TypeParam::Params;
@@ -233,23 +229,6 @@ TYPED_TEST_P(FieldConstantsTest, WasmModulusConsistency)
     EXPECT_EQ(wasm_modulus.hi, uint256_t(0));
 }
 
-// Verify R_wasm^2 mod p, where R_wasm = 2^261 = 2^(29*9).
-TYPED_TEST_P(FieldConstantsTest, WasmRSquared)
-{
-    using Params = typename TypeParam::Params;
-    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-    uint512_t R_wasm = uint512_t(1) << 261;
-    uint512_t R_wasm_mod = R_wasm % mod;
-    uint512_t expected = (R_wasm_mod * R_wasm_mod) % mod;
-    uint256_t actual{
-        Params::r_squared_wasm_0, Params::r_squared_wasm_1, Params::r_squared_wasm_2, Params::r_squared_wasm_3
-    };
-    EXPECT_EQ(expected.lo, actual);
-    EXPECT_EQ(expected.hi, uint256_t(0));
-}
-
-// Verify r_inv_wasm_{0-8} = 2^{-29} mod p, stored as 9 x 29-bit limbs.
-// Also verify each limb fits in 29 bits, and that it is smaller than the modulus
 TYPED_TEST_P(FieldConstantsTest, WasmPowMinus29)
 {
     using Params = typename TypeParam::Params;
@@ -269,79 +248,18 @@ TYPED_TEST_P(FieldConstantsTest, WasmPowMinus29)
     EXPECT_LT(r_inv_wasm, uint512_t(mod));
 }
 
-// Verify cube_root_wasm is the same field element as cube_root_native but in WASM Montgomery form.
-// Since R_wasm = 2^261 and R_native = 2^256, converting native -> WASM multiplies by 2^5 = 32.
-TYPED_TEST_P(FieldConstantsTest, WasmCubeRootConsistency)
-{
-    if constexpr (!TypeParam::has_cube_root) {
-        GTEST_SKIP() << "Cube root is not used for this field";
-    } else {
-        using Params = typename TypeParam::Params;
-        uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-        uint256_t cube_root_native{
-            Params::cube_root_0, Params::cube_root_1, Params::cube_root_2, Params::cube_root_3
-        };
-        uint256_t cube_root_wasm{
-            Params::cube_root_wasm_0, Params::cube_root_wasm_1, Params::cube_root_wasm_2, Params::cube_root_wasm_3
-        };
-        // R_wasm / R_native = 2^261 / 2^256 = 2^5 = 32
-        uint512_t expected = (uint512_t(cube_root_native) * 32) % mod;
-        EXPECT_EQ(expected.lo, cube_root_wasm);
-    }
-}
-
-// Verify primitive_root_wasm is the same field element as primitive_root_native in WASM Montgomery form.
-TYPED_TEST_P(FieldConstantsTest, WasmPrimitiveRootConsistency)
-{
-    if constexpr (!TypeParam::has_primitive_root) {
-        GTEST_SKIP() << "Primitive root is not used for this field";
-    } else {
-        using Params = typename TypeParam::Params;
-        uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-        uint256_t primitive_root_native{
-            Params::primitive_root_0, Params::primitive_root_1, Params::primitive_root_2, Params::primitive_root_3
-        };
-        uint256_t primitive_root_wasm{ Params::primitive_root_wasm_0,
-                                       Params::primitive_root_wasm_1,
-                                       Params::primitive_root_wasm_2,
-                                       Params::primitive_root_wasm_3 };
-        // R_wasm / R_native = 2^261 / 2^256 = 2^5 = 32
-        uint512_t expected = (uint512_t(primitive_root_native) * 32) % mod;
-        EXPECT_EQ(expected.lo, primitive_root_wasm);
-    }
-}
-
-// Verify coset_generator_wasm is the same field element as coset_generator_native in WASM Montgomery form.
-TYPED_TEST_P(FieldConstantsTest, CosetGeneratorConsistency)
-{
-    using Params = typename TypeParam::Params;
-    uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-    uint256_t coset_generator_native{
-        Params::coset_generator_0, Params::coset_generator_1, Params::coset_generator_2, Params::coset_generator_3
-    };
-    uint256_t coset_generator_wasm{ Params::coset_generator_wasm_0,
-                                    Params::coset_generator_wasm_1,
-                                    Params::coset_generator_wasm_2,
-                                    Params::coset_generator_wasm_3 };
-    // R_wasm / R_native = 2^261 / 2^256 = 2^5 = 32
-    uint512_t expected = (static_cast<uint512_t>(coset_generator_native) * 32) % mod;
-    EXPECT_EQ(expected, static_cast<uint512_t>(coset_generator_wasm));
-}
-
 REGISTER_TYPED_TEST_SUITE_P(FieldConstantsTest,
                             Modulus,
                             RSquared,
+                            RSquaredBothPlatforms,
                             RInv,
                             PowMinus64,
                             CubeRootOfUnity,
                             PrimitiveRootOfUnity,
                             CosetGenerator,
+                            MontgomeryFormDerivation,
                             WasmModulusConsistency,
-                            WasmRSquared,
-                            WasmPowMinus29,
-                            WasmCubeRootConsistency,
-                            WasmPrimitiveRootConsistency,
-                            CosetGeneratorConsistency);
+                            WasmPowMinus29);
 
 using FieldTestTypes = ::testing::Types<Bn254FqTestConfig,
                                         Bn254FrTestConfig,

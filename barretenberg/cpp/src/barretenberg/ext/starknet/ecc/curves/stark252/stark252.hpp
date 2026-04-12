@@ -2,6 +2,7 @@
 #pragma once
 
 #include "barretenberg/ecc/fields/field.hpp"
+#include "barretenberg/ecc/fields/field_constexpr_helpers.hpp"
 #include "barretenberg/honk/types/public_inputs_type.hpp"
 
 namespace bb::starknet::stark252 {
@@ -12,10 +13,19 @@ struct FqParams {
     static constexpr uint64_t modulus_2 = 0x0000000000000000ULL;
     static constexpr uint64_t modulus_3 = 0x0800000000000011ULL;
 
-    static constexpr uint64_t r_squared_0 = 0xfffffd737e000401ULL;
-    static constexpr uint64_t r_squared_1 = 0x00000001330fffffULL;
-    static constexpr uint64_t r_squared_2 = 0xffffffffff6f8000ULL;
-    static constexpr uint64_t r_squared_3 = 0x07ffd4ab5e008810ULL;
+    static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
+
+#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
+    static constexpr unsigned R_EXPONENT = 256;
+#else
+    static constexpr unsigned R_EXPONENT = 261;
+#endif
+
+    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, R_EXPONENT);
+    static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
+    static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
+    static constexpr uint64_t r_squared_2 = r_squared_uint256.data[2];
+    static constexpr uint64_t r_squared_3 = r_squared_uint256.data[3];
 
     static constexpr uint64_t r_inv = 0xffffffffffffffffULL;
 
@@ -33,11 +43,6 @@ struct FqParams {
     static constexpr uint64_t modulus_wasm_6 = 0x00440000;
     static constexpr uint64_t modulus_wasm_7 = 0x00000000;
     static constexpr uint64_t modulus_wasm_8 = 0x00080000;
-
-    static constexpr uint64_t r_squared_wasm_0 = 0xfff5cdf800100001ULL;
-    static constexpr uint64_t r_squared_wasm_1 = 0x000004cc3fffffffULL;
-    static constexpr uint64_t r_squared_wasm_2 = 0xfffffffdbe000000ULL;
-    static constexpr uint64_t r_squared_wasm_3 = 0x0752ad7802200010ULL;
 
     static constexpr uint64_t r_inv_wasm_0 = 0x00000001;
     static constexpr uint64_t r_inv_wasm_1 = 0x00000000;

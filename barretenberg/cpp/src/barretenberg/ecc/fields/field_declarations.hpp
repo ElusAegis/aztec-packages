@@ -233,14 +233,11 @@ template <class Params_> struct alignas(32) field {
 
     static constexpr uint256_t modulus =
         uint256_t{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
+    // r_squared is now auto-derived from R_EXPONENT in each param struct — no native/wasm branching needed
     static constexpr uint256_t r_squared_uint{
         Params_::r_squared_0, Params_::r_squared_1, Params_::r_squared_2, Params_::r_squared_3
     };
-#else
-    static constexpr uint256_t r_squared_uint{
-        Params_::r_squared_wasm_0, Params_::r_squared_wasm_1, Params_::r_squared_wasm_2, Params_::r_squared_wasm_3
-    };
+#if !defined(__SIZEOF_INT128__) || defined(__wasm__)
     static constexpr std::array<uint64_t, 9> wasm_modulus = { Params::modulus_wasm_0, Params::modulus_wasm_1,
                                                               Params::modulus_wasm_2, Params::modulus_wasm_3,
                                                               Params::modulus_wasm_4, Params::modulus_wasm_5,
@@ -250,21 +247,15 @@ template <class Params_> struct alignas(32) field {
         Params::r_inv_wasm_0, Params::r_inv_wasm_1, Params::r_inv_wasm_2, Params::r_inv_wasm_3, Params::r_inv_wasm_4,
         Params::r_inv_wasm_5, Params::r_inv_wasm_6, Params::r_inv_wasm_7, Params::r_inv_wasm_8
     };
-
 #endif
+    // cube_root, coset_generator, primitive_root are now auto-derived in Montgomery form
+    // from canonical values + R_EXPONENT in each param struct — no native/wasm branching needed
     static constexpr field cube_root_of_unity()
     {
-        // endomorphism i.e. lambda * [P] = (beta * x, y)
         if constexpr (Params::cube_root_0 != 0) {
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
             constexpr field result{
                 Params::cube_root_0, Params::cube_root_1, Params::cube_root_2, Params::cube_root_3
             };
-#else
-            constexpr field result{
-                Params::cube_root_wasm_0, Params::cube_root_wasm_1, Params::cube_root_wasm_2, Params::cube_root_wasm_3
-            };
-#endif
             return result;
         } else {
             constexpr field two_inv = field(2).invert();
@@ -280,22 +271,12 @@ template <class Params_> struct alignas(32) field {
 
     static constexpr field coset_generator()
     {
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
         const field result{
             Params::coset_generator_0,
             Params::coset_generator_1,
             Params::coset_generator_2,
             Params::coset_generator_3,
         };
-#else
-        const field result{
-            Params::coset_generator_0,
-            Params::coset_generator_1,
-            Params::coset_generator_2,
-            Params::coset_generator_3,
-        };
-#endif
-
         return result;
     }
 
