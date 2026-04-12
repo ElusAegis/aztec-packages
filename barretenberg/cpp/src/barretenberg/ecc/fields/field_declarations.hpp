@@ -235,6 +235,13 @@ template <class Params_> struct alignas(32) field {
     // On native (64-bit limbs), these are just the 4 uint64_t words of the modulus.
     // On WASM (29-bit limbs), these are the 9 sub-word limbs used by the schoolbook montmul.
     static constexpr auto r_limbs = compute_r_limb_constants(Params::modulus_uint256);
+
+    // Use generic (non-asm) arithmetic: no BMI2 asm, large modulus (>= 2^254), or tiny modulus (<= 64 bits).
+    static constexpr bool use_generic_arithmetic =
+        BBERG_NO_ASM ||
+        (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+        (modulus.data[1] == 0 && modulus.data[2] == 0 && modulus.data[3] == 0);
+
     static constexpr field cube_root_of_unity()
     {
         if constexpr (Params::cube_root_mont != uint256_t(0)) {

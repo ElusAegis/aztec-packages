@@ -33,8 +33,7 @@ namespace bb {
  **/
 template <class T> constexpr field<T> field<T>::operator*(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         // >= 255-bits or <= 64-bits.
         return montgomery_mul(other);
     } else {
@@ -49,8 +48,7 @@ template <class T> constexpr field<T> field<T>::operator*(const field& other) co
 
 template <class T> constexpr field<T>& field<T>::operator*=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         // >= 255-bits or <= 64-bits.
         *this = operator*(other);
     } else {
@@ -71,8 +69,7 @@ template <class T> constexpr field<T>& field<T>::operator*=(const field& other) 
  **/
 template <class T> constexpr field<T> field<T>::sqr() const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         return montgomery_square();
     } else {
         if (std::is_constant_evaluated()) {
@@ -86,8 +83,7 @@ template <class T> constexpr field<T> field<T>::sqr() const noexcept
 
 template <class T> constexpr void field<T>::self_sqr() & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         *this = montgomery_square();
     } else {
         if (std::is_constant_evaluated()) {
@@ -106,8 +102,7 @@ template <class T> constexpr void field<T>::self_sqr() & noexcept
  **/
 template <class T> constexpr field<T> field<T>::operator+(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         return add(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -121,8 +116,7 @@ template <class T> constexpr field<T> field<T>::operator+(const field& other) co
 
 template <class T> constexpr field<T>& field<T>::operator+=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         (*this) = operator+(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -155,8 +149,7 @@ template <class T> constexpr field<T> field<T>::operator++(int) noexcept
  **/
 template <class T> constexpr field<T> field<T>::operator-(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         return subtract(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -180,8 +173,7 @@ template <class T> constexpr field<T> field<T>::operator-() const noexcept
 
 template <class T> constexpr field<T>& field<T>::operator-=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         *this = subtract(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -203,8 +195,7 @@ template <class T> constexpr void field<T>::self_neg() & noexcept
 
 template <class T> constexpr void field<T>::self_conditional_negate(const uint64_t predicate) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         *this = predicate ? -(*this) : *this; // NOLINT
     } else {
         if (std::is_constant_evaluated()) {
@@ -333,8 +324,7 @@ template <class T> constexpr void field<T>::self_from_montgomery_form_reduced() 
 
 template <class T> constexpr field<T> field<T>::reduce_once() const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         return reduce();
     } else {
         if (std::is_constant_evaluated()) {
@@ -346,8 +336,7 @@ template <class T> constexpr field<T> field<T>::reduce_once() const noexcept
 
 template <class T> constexpr void field<T>::self_reduce_once() & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_uint256.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_uint256.data[1] == 0 && T::modulus_uint256.data[2] == 0 && T::modulus_uint256.data[3] == 0)) {
+    if constexpr (use_generic_arithmetic) {
         *this = reduce();
     } else {
         if (std::is_constant_evaluated()) {
