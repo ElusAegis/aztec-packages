@@ -508,6 +508,9 @@ template <class Params_> struct alignas(32) field {
     static constexpr uint256_t not_modulus = -modulus;
     static constexpr uint256_t twice_not_modulus = -twice_modulus;
 
+    // TODO(#limb-generalize): These helpers are hardcoded for the 29-bit / 9-limb representation.
+    // They should be moved into a limb-specific montmul implementation file so that alternative
+    // limb widths (e.g. 24-bit / 11-limb for FMA) can provide their own versions.
 #if defined(__wasm__) || !defined(__SIZEOF_INT128__)
     BB_INLINE static constexpr void wasm_madd(uint64_t& left_limb,
                                               const std::array<uint64_t, R_NUM_LIMBS>& right_limbs,

@@ -236,6 +236,8 @@ class alignas(32) uint256_t {
                                                                      uint64_t b,
                                                                      uint64_t c,
                                                                      uint64_t carry_in);
+    // TODO(#limb-generalize): Hardcoded for 29-bit / 9-limb representation.
+    // Should be moved into a limb-specific implementation when alternative limb widths are needed.
 #if defined(__wasm__) || !defined(__SIZEOF_INT128__)
     static constexpr void wasm_madd(const uint64_t& left_limb,
                                     const uint64_t* right_limbs,
