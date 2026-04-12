@@ -113,7 +113,7 @@ constexpr void uint256_t::wasm_madd(const uint64_t& left_limb,
  * @brief Convert from 4 64-bit limbs to 9 29-bit limbs
  *
  */
-constexpr std::array<uint64_t, WASM_NUM_LIMBS> uint256_t::wasm_convert(const uint64_t* data)
+constexpr std::array<uint64_t, bb::R_NUM_LIMBS> uint256_t::wasm_convert(const uint64_t* data)
 {
     // 0x1fffffff == 2^30 - 1
     return {
@@ -277,37 +277,37 @@ constexpr std::pair<uint256_t, uint256_t> uint256_t::mul_extended(const uint256_
     wasm_madd(left[8], &right[0], temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
 
     // Convert from relaxed form into strict 29-bit form (except for temp_16)
-    temp_1 += temp_0 >> WASM_LIMB_BITS;
+    temp_1 += temp_0 >> bb::R_LIMB_BITS;
     temp_0 &= mask;
-    temp_2 += temp_1 >> WASM_LIMB_BITS;
+    temp_2 += temp_1 >> bb::R_LIMB_BITS;
     temp_1 &= mask;
-    temp_3 += temp_2 >> WASM_LIMB_BITS;
+    temp_3 += temp_2 >> bb::R_LIMB_BITS;
     temp_2 &= mask;
-    temp_4 += temp_3 >> WASM_LIMB_BITS;
+    temp_4 += temp_3 >> bb::R_LIMB_BITS;
     temp_3 &= mask;
-    temp_5 += temp_4 >> WASM_LIMB_BITS;
+    temp_5 += temp_4 >> bb::R_LIMB_BITS;
     temp_4 &= mask;
-    temp_6 += temp_5 >> WASM_LIMB_BITS;
+    temp_6 += temp_5 >> bb::R_LIMB_BITS;
     temp_5 &= mask;
-    temp_7 += temp_6 >> WASM_LIMB_BITS;
+    temp_7 += temp_6 >> bb::R_LIMB_BITS;
     temp_6 &= mask;
-    temp_8 += temp_7 >> WASM_LIMB_BITS;
+    temp_8 += temp_7 >> bb::R_LIMB_BITS;
     temp_7 &= mask;
-    temp_9 += temp_8 >> WASM_LIMB_BITS;
+    temp_9 += temp_8 >> bb::R_LIMB_BITS;
     temp_8 &= mask;
-    temp_10 += temp_9 >> WASM_LIMB_BITS;
+    temp_10 += temp_9 >> bb::R_LIMB_BITS;
     temp_9 &= mask;
-    temp_11 += temp_10 >> WASM_LIMB_BITS;
+    temp_11 += temp_10 >> bb::R_LIMB_BITS;
     temp_10 &= mask;
-    temp_12 += temp_11 >> WASM_LIMB_BITS;
+    temp_12 += temp_11 >> bb::R_LIMB_BITS;
     temp_11 &= mask;
-    temp_13 += temp_12 >> WASM_LIMB_BITS;
+    temp_13 += temp_12 >> bb::R_LIMB_BITS;
     temp_12 &= mask;
-    temp_14 += temp_13 >> WASM_LIMB_BITS;
+    temp_14 += temp_13 >> bb::R_LIMB_BITS;
     temp_13 &= mask;
-    temp_15 += temp_14 >> WASM_LIMB_BITS;
+    temp_15 += temp_14 >> bb::R_LIMB_BITS;
     temp_14 &= mask;
-    temp_16 += temp_15 >> WASM_LIMB_BITS;
+    temp_16 += temp_15 >> bb::R_LIMB_BITS;
     temp_15 &= mask;
 
     // Convert to 2 4-64-bit limb uint256_t objects
@@ -474,21 +474,21 @@ constexpr uint256_t uint256_t::operator*(const uint256_t& other) const
 
     // Convert from relaxed form to strict 29-bit form
     constexpr uint64_t mask = 0x1fffffff;
-    temp_1 += temp_0 >> WASM_LIMB_BITS;
+    temp_1 += temp_0 >> bb::R_LIMB_BITS;
     temp_0 &= mask;
-    temp_2 += temp_1 >> WASM_LIMB_BITS;
+    temp_2 += temp_1 >> bb::R_LIMB_BITS;
     temp_1 &= mask;
-    temp_3 += temp_2 >> WASM_LIMB_BITS;
+    temp_3 += temp_2 >> bb::R_LIMB_BITS;
     temp_2 &= mask;
-    temp_4 += temp_3 >> WASM_LIMB_BITS;
+    temp_4 += temp_3 >> bb::R_LIMB_BITS;
     temp_3 &= mask;
-    temp_5 += temp_4 >> WASM_LIMB_BITS;
+    temp_5 += temp_4 >> bb::R_LIMB_BITS;
     temp_4 &= mask;
-    temp_6 += temp_5 >> WASM_LIMB_BITS;
+    temp_6 += temp_5 >> bb::R_LIMB_BITS;
     temp_5 &= mask;
-    temp_7 += temp_6 >> WASM_LIMB_BITS;
+    temp_7 += temp_6 >> bb::R_LIMB_BITS;
     temp_6 &= mask;
-    temp_8 += temp_7 >> WASM_LIMB_BITS;
+    temp_8 += temp_7 >> bb::R_LIMB_BITS;
     temp_7 &= mask;
 
     // Convert back to 4 64-bit limbs

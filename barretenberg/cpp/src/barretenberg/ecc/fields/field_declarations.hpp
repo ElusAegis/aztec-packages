@@ -71,11 +71,6 @@ template <class Params_> struct alignas(32) field {
     // The number of element required to represent field<Params_> in the public inputs of a circuit
     static constexpr size_t PUBLIC_INPUTS_SIZE = Params::PUBLIC_INPUTS_SIZE;
 
-#if defined(__wasm__) || !defined(__SIZEOF_INT128__)
-#define WASM_NUM_LIMBS 9
-#define WASM_LIMB_BITS 29
-#endif
-
     // We don't initialize data in the default constructor since we'd lose a lot of time on huge array initializations.
     // Other alternatives have been noted, such as casting to get around constructors where they matter,
     // however it is felt that sanitizer tools (e.g. MSAN) can detect garbage well, whereas doing
@@ -238,7 +233,7 @@ template <class Params_> struct alignas(32) field {
         Params_::r_squared_0, Params_::r_squared_1, Params_::r_squared_2, Params_::r_squared_3
     };
 #if !defined(__SIZEOF_INT128__) || defined(__wasm__)
-    static constexpr auto limb29 = compute_limb_constants<29, 9>(Params::modulus_uint256);
+    static constexpr auto r_limbs = compute_r_limb_constants(Params::modulus_uint256);
 #endif
     static constexpr field cube_root_of_unity()
     {
@@ -515,7 +510,7 @@ template <class Params_> struct alignas(32) field {
 
 #if defined(__wasm__) || !defined(__SIZEOF_INT128__)
     BB_INLINE static constexpr void wasm_madd(uint64_t& left_limb,
-                                              const std::array<uint64_t, WASM_NUM_LIMBS>& right_limbs,
+                                              const std::array<uint64_t, R_NUM_LIMBS>& right_limbs,
                                               uint64_t& result_0,
                                               uint64_t& result_1,
                                               uint64_t& result_2,
@@ -544,7 +539,7 @@ template <class Params_> struct alignas(32) field {
                                                       uint64_t& result_7,
                                                       uint64_t& result_8,
                                                       uint64_t& result_9);
-    BB_INLINE static constexpr std::array<uint64_t, WASM_NUM_LIMBS> wasm_convert(const uint64_t* data);
+    BB_INLINE static constexpr std::array<uint64_t, R_NUM_LIMBS> wasm_convert(const uint64_t* data);
 #endif
     BB_INLINE static constexpr std::pair<uint64_t, uint64_t> mul_wide(uint64_t a, uint64_t b) noexcept;
 

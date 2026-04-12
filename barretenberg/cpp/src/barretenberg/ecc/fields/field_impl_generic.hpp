@@ -511,21 +511,21 @@ template <class T> constexpr field<T> field<T>::montgomery_mul_big(const field& 
     //
     // After all multiplications and additions, convert relaxed form to strict (i.e., force all limbs to be
     // 29 bits)
-    temp_10 += temp_9 >> WASM_LIMB_BITS;
+    temp_10 += temp_9 >> R_LIMB_BITS;
     temp_9 &= mask;
-    temp_11 += temp_10 >> WASM_LIMB_BITS;
+    temp_11 += temp_10 >> R_LIMB_BITS;
     temp_10 &= mask;
-    temp_12 += temp_11 >> WASM_LIMB_BITS;
+    temp_12 += temp_11 >> R_LIMB_BITS;
     temp_11 &= mask;
-    temp_13 += temp_12 >> WASM_LIMB_BITS;
+    temp_13 += temp_12 >> R_LIMB_BITS;
     temp_12 &= mask;
-    temp_14 += temp_13 >> WASM_LIMB_BITS;
+    temp_14 += temp_13 >> R_LIMB_BITS;
     temp_13 &= mask;
-    temp_15 += temp_14 >> WASM_LIMB_BITS;
+    temp_15 += temp_14 >> R_LIMB_BITS;
     temp_14 &= mask;
-    temp_16 += temp_15 >> WASM_LIMB_BITS;
+    temp_16 += temp_15 >> R_LIMB_BITS;
     temp_15 &= mask;
-    temp_17 += temp_16 >> WASM_LIMB_BITS;
+    temp_17 += temp_16 >> R_LIMB_BITS;
     temp_16 &= mask;
 
     uint64_t r_temp_0;
@@ -538,15 +538,15 @@ template <class T> constexpr field<T> field<T>::montgomery_mul_big(const field& 
     uint64_t r_temp_7;
     uint64_t r_temp_8;
 
-    r_temp_0 = temp_9 - limb29.modulus[0];
-    r_temp_1 = temp_10 - limb29.modulus[1] - ((r_temp_0) >> 63);
-    r_temp_2 = temp_11 - limb29.modulus[2] - ((r_temp_1) >> 63);
-    r_temp_3 = temp_12 - limb29.modulus[3] - ((r_temp_2) >> 63);
-    r_temp_4 = temp_13 - limb29.modulus[4] - ((r_temp_3) >> 63);
-    r_temp_5 = temp_14 - limb29.modulus[5] - ((r_temp_4) >> 63);
-    r_temp_6 = temp_15 - limb29.modulus[6] - ((r_temp_5) >> 63);
-    r_temp_7 = temp_16 - limb29.modulus[7] - ((r_temp_6) >> 63);
-    r_temp_8 = temp_17 - limb29.modulus[8] - ((r_temp_7) >> 63);
+    r_temp_0 = temp_9 - r_limbs.modulus[0];
+    r_temp_1 = temp_10 - r_limbs.modulus[1] - ((r_temp_0) >> 63);
+    r_temp_2 = temp_11 - r_limbs.modulus[2] - ((r_temp_1) >> 63);
+    r_temp_3 = temp_12 - r_limbs.modulus[3] - ((r_temp_2) >> 63);
+    r_temp_4 = temp_13 - r_limbs.modulus[4] - ((r_temp_3) >> 63);
+    r_temp_5 = temp_14 - r_limbs.modulus[5] - ((r_temp_4) >> 63);
+    r_temp_6 = temp_15 - r_limbs.modulus[6] - ((r_temp_5) >> 63);
+    r_temp_7 = temp_16 - r_limbs.modulus[7] - ((r_temp_6) >> 63);
+    r_temp_8 = temp_17 - r_limbs.modulus[8] - ((r_temp_7) >> 63);
 
     // Depending on whether the subtraction underflowed, choose original value or the result of subtraction
     uint64_t new_mask = 0 - (r_temp_8 >> 63);
@@ -579,7 +579,7 @@ template <class T> constexpr field<T> field<T>::montgomery_mul_big(const field& 
  */
 template <class T>
 constexpr void field<T>::wasm_madd(uint64_t& left_limb,
-                                   const std::array<uint64_t, WASM_NUM_LIMBS>& right_limbs,
+                                   const std::array<uint64_t, R_NUM_LIMBS>& right_limbs,
                                    uint64_t& result_0,
                                    uint64_t& result_1,
                                    uint64_t& result_2,
@@ -633,17 +633,17 @@ constexpr void field<T>::wasm_reduce(uint64_t& result_0,
                                      uint64_t& result_8)
 {
     constexpr uint64_t mask = 0x1fffffff;
-    constexpr uint64_t r_inv = T::r_inv & mask; //  -(modulus ^ { -1 }) modulo 2 ^ WASM_LIMB_BITS
+    constexpr uint64_t r_inv = T::r_inv & mask; //  -(modulus ^ { -1 }) modulo 2 ^ R_LIMB_BITS
     uint64_t k = (result_0 * r_inv) & mask;
-    result_0 += k * limb29.modulus[0];
-    result_1 += k * limb29.modulus[1] + (result_0 >> WASM_LIMB_BITS);
-    result_2 += k * limb29.modulus[2];
-    result_3 += k * limb29.modulus[3];
-    result_4 += k * limb29.modulus[4];
-    result_5 += k * limb29.modulus[5];
-    result_6 += k * limb29.modulus[6];
-    result_7 += k * limb29.modulus[7];
-    result_8 += k * limb29.modulus[8];
+    result_0 += k * r_limbs.modulus[0];
+    result_1 += k * r_limbs.modulus[1] + (result_0 >> R_LIMB_BITS);
+    result_2 += k * r_limbs.modulus[2];
+    result_3 += k * r_limbs.modulus[3];
+    result_4 += k * r_limbs.modulus[4];
+    result_5 += k * r_limbs.modulus[5];
+    result_6 += k * r_limbs.modulus[6];
+    result_7 += k * r_limbs.modulus[7];
+    result_8 += k * r_limbs.modulus[8];
 }
 
 /**
@@ -657,7 +657,7 @@ constexpr void field<T>::wasm_reduce(uint64_t& result_0,
  *   x / 2^{29} = (x - result_0) / 2^{29} + result_0 * 2^{-29}  (mod p)
  *
  * The first term is just the higher limbs (an integer shift since result_0 contains all low bits).
- * The second term is result_0 * r_inv, where r_inv = 2^{-29} mod p is precomputed as `limb29.div_r_inv`.
+ * The second term is result_0 * r_inv, where r_inv = 2^{-29} mod p is precomputed as `r_limbs.div_r_inv`.
  *
  * After calling this method, result_0 is discarded and result_1..result_9 hold x / 2^{29} mod p.
  *
@@ -680,24 +680,24 @@ constexpr void field<T>::wasm_reduce_yuval(uint64_t& result_0,
 {
     constexpr uint64_t mask = 0x1fffffff;
     const uint64_t result_0_masked = result_0 & mask;
-    result_1 += result_0_masked * limb29.div_r_inv[0] + (result_0 >> WASM_LIMB_BITS);
-    result_2 += result_0_masked * limb29.div_r_inv[1];
-    result_3 += result_0_masked * limb29.div_r_inv[2];
-    result_4 += result_0_masked * limb29.div_r_inv[3];
-    result_5 += result_0_masked * limb29.div_r_inv[4];
-    result_6 += result_0_masked * limb29.div_r_inv[5];
-    result_7 += result_0_masked * limb29.div_r_inv[6];
-    result_8 += result_0_masked * limb29.div_r_inv[7];
-    result_9 += result_0_masked * limb29.div_r_inv[8];
+    result_1 += result_0_masked * r_limbs.div_r_inv[0] + (result_0 >> R_LIMB_BITS);
+    result_2 += result_0_masked * r_limbs.div_r_inv[1];
+    result_3 += result_0_masked * r_limbs.div_r_inv[2];
+    result_4 += result_0_masked * r_limbs.div_r_inv[3];
+    result_5 += result_0_masked * r_limbs.div_r_inv[4];
+    result_6 += result_0_masked * r_limbs.div_r_inv[5];
+    result_7 += result_0_masked * r_limbs.div_r_inv[6];
+    result_8 += result_0_masked * r_limbs.div_r_inv[7];
+    result_9 += result_0_masked * r_limbs.div_r_inv[8];
 }
 /**
  * @brief Convert 4 64-bit limbs into 9 29-bit limbs
  *
  */
-template <class T> constexpr std::array<uint64_t, WASM_NUM_LIMBS> field<T>::wasm_convert(const uint64_t* data)
+template <class T> constexpr std::array<uint64_t, R_NUM_LIMBS> field<T>::wasm_convert(const uint64_t* data)
 {
     return { data[0] & 0x1fffffff,
-             (data[0] >> WASM_LIMB_BITS) & 0x1fffffff,
+             (data[0] >> R_LIMB_BITS) & 0x1fffffff,
              ((data[0] >> 58) & 0x3f) | ((data[1] & 0x7fffff) << 6),
              (data[1] >> 23) & 0x1fffffff,
              ((data[1] >> 52) & 0xfff) | ((data[2] & 0x1ffff) << 12),
@@ -830,19 +830,19 @@ template <class T> constexpr field<T> field<T>::montgomery_mul(const field& othe
     // representation.
 
     // Convert result to unrelaxed form (all limbs are 29 bits)
-    temp_10 += temp_9 >> WASM_LIMB_BITS;
+    temp_10 += temp_9 >> R_LIMB_BITS;
     temp_9 &= mask;
-    temp_11 += temp_10 >> WASM_LIMB_BITS;
+    temp_11 += temp_10 >> R_LIMB_BITS;
     temp_10 &= mask;
-    temp_12 += temp_11 >> WASM_LIMB_BITS;
+    temp_12 += temp_11 >> R_LIMB_BITS;
     temp_11 &= mask;
-    temp_13 += temp_12 >> WASM_LIMB_BITS;
+    temp_13 += temp_12 >> R_LIMB_BITS;
     temp_12 &= mask;
-    temp_14 += temp_13 >> WASM_LIMB_BITS;
+    temp_14 += temp_13 >> R_LIMB_BITS;
     temp_13 &= mask;
-    temp_15 += temp_14 >> WASM_LIMB_BITS;
+    temp_15 += temp_14 >> R_LIMB_BITS;
     temp_14 &= mask;
-    temp_16 += temp_15 >> WASM_LIMB_BITS;
+    temp_16 += temp_15 >> R_LIMB_BITS;
     temp_15 &= mask;
 
     // Convert back to 4 64-bit limbs form
@@ -1046,19 +1046,19 @@ template <class T> constexpr field<T> field<T>::montgomery_square() const noexce
     wasm_reduce(temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
 
     // Convert to unrelaxed 29-bit form
-    temp_10 += temp_9 >> WASM_LIMB_BITS;
+    temp_10 += temp_9 >> R_LIMB_BITS;
     temp_9 &= mask;
-    temp_11 += temp_10 >> WASM_LIMB_BITS;
+    temp_11 += temp_10 >> R_LIMB_BITS;
     temp_10 &= mask;
-    temp_12 += temp_11 >> WASM_LIMB_BITS;
+    temp_12 += temp_11 >> R_LIMB_BITS;
     temp_11 &= mask;
-    temp_13 += temp_12 >> WASM_LIMB_BITS;
+    temp_13 += temp_12 >> R_LIMB_BITS;
     temp_12 &= mask;
-    temp_14 += temp_13 >> WASM_LIMB_BITS;
+    temp_14 += temp_13 >> R_LIMB_BITS;
     temp_13 &= mask;
-    temp_15 += temp_14 >> WASM_LIMB_BITS;
+    temp_15 += temp_14 >> R_LIMB_BITS;
     temp_14 &= mask;
-    temp_16 += temp_15 >> WASM_LIMB_BITS;
+    temp_16 += temp_15 >> R_LIMB_BITS;
     temp_15 &= mask;
     // Convert to 4 64-bit form
     return { (temp_9 << 0) | (temp_10 << 29) | (temp_11 << 58),
@@ -1128,37 +1128,37 @@ template <class T> constexpr struct field<T>::wide_array field<T>::mul_512(const
     wasm_madd(left[8], right, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
 
     // Convert to unrelaxed 29-bit form
-    temp_1 += temp_0 >> WASM_LIMB_BITS;
+    temp_1 += temp_0 >> R_LIMB_BITS;
     temp_0 &= mask;
-    temp_2 += temp_1 >> WASM_LIMB_BITS;
+    temp_2 += temp_1 >> R_LIMB_BITS;
     temp_1 &= mask;
-    temp_3 += temp_2 >> WASM_LIMB_BITS;
+    temp_3 += temp_2 >> R_LIMB_BITS;
     temp_2 &= mask;
-    temp_4 += temp_3 >> WASM_LIMB_BITS;
+    temp_4 += temp_3 >> R_LIMB_BITS;
     temp_3 &= mask;
-    temp_5 += temp_4 >> WASM_LIMB_BITS;
+    temp_5 += temp_4 >> R_LIMB_BITS;
     temp_4 &= mask;
-    temp_6 += temp_5 >> WASM_LIMB_BITS;
+    temp_6 += temp_5 >> R_LIMB_BITS;
     temp_5 &= mask;
-    temp_7 += temp_6 >> WASM_LIMB_BITS;
+    temp_7 += temp_6 >> R_LIMB_BITS;
     temp_6 &= mask;
-    temp_8 += temp_7 >> WASM_LIMB_BITS;
+    temp_8 += temp_7 >> R_LIMB_BITS;
     temp_7 &= mask;
-    temp_9 += temp_8 >> WASM_LIMB_BITS;
+    temp_9 += temp_8 >> R_LIMB_BITS;
     temp_8 &= mask;
-    temp_10 += temp_9 >> WASM_LIMB_BITS;
+    temp_10 += temp_9 >> R_LIMB_BITS;
     temp_9 &= mask;
-    temp_11 += temp_10 >> WASM_LIMB_BITS;
+    temp_11 += temp_10 >> R_LIMB_BITS;
     temp_10 &= mask;
-    temp_12 += temp_11 >> WASM_LIMB_BITS;
+    temp_12 += temp_11 >> R_LIMB_BITS;
     temp_11 &= mask;
-    temp_13 += temp_12 >> WASM_LIMB_BITS;
+    temp_13 += temp_12 >> R_LIMB_BITS;
     temp_12 &= mask;
-    temp_14 += temp_13 >> WASM_LIMB_BITS;
+    temp_14 += temp_13 >> R_LIMB_BITS;
     temp_13 &= mask;
-    temp_15 += temp_14 >> WASM_LIMB_BITS;
+    temp_15 += temp_14 >> R_LIMB_BITS;
     temp_14 &= mask;
-    temp_16 += temp_15 >> WASM_LIMB_BITS;
+    temp_16 += temp_15 >> R_LIMB_BITS;
     temp_15 &= mask;
 
     // Convert to 8 64-bit limbs

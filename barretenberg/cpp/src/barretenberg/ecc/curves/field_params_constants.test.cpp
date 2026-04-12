@@ -31,68 +31,71 @@
 
 using namespace bb;
 
+// ---- Static assertions: derivation chain ----
+
+static_assert(bb::FIELD_BITS == 256);
+static_assert(bb::R_NUM_LIMBS == (bb::FIELD_BITS + bb::R_LIMB_BITS - 1) / bb::R_LIMB_BITS);
+static_assert(bb::R_EXPONENT == bb::R_LIMB_BITS * bb::R_NUM_LIMBS);
+
 // ---- Static assertions: computed 29-bit limb constants match old hardcoded values ----
 
-// R_EXPONENT on native build
-static_assert(bb::R_EXPONENT == 256, "R_EXPONENT should be 256 on native build");
-
 // BN254 Fq: all 9 modulus limbs
-static constexpr auto bn254_fq_limb29 = compute_limb_constants<29, 9>(Bn254FqParams::modulus_uint256);
-static_assert(bn254_fq_limb29.modulus[0] == 0x187cfd47);
-static_assert(bn254_fq_limb29.modulus[1] == 0x10460b6);
-static_assert(bn254_fq_limb29.modulus[2] == 0x1c72a34f);
-static_assert(bn254_fq_limb29.modulus[3] == 0x2d522d0);
-static_assert(bn254_fq_limb29.modulus[4] == 0x1585d978);
-static_assert(bn254_fq_limb29.modulus[5] == 0x2db40c0);
-static_assert(bn254_fq_limb29.modulus[6] == 0xa6e141);
-static_assert(bn254_fq_limb29.modulus[7] == 0xe5c2634);
-static_assert(bn254_fq_limb29.modulus[8] == 0x30644e);
+static constexpr auto bn254_fq_r_limbs = compute_limb_constants<29, 9>(Bn254FqParams::modulus_uint256);
+static_assert(bn254_fq_r_limbs.modulus[0] == 0x187cfd47);
+static_assert(bn254_fq_r_limbs.modulus[1] == 0x10460b6);
+static_assert(bn254_fq_r_limbs.modulus[2] == 0x1c72a34f);
+static_assert(bn254_fq_r_limbs.modulus[3] == 0x2d522d0);
+static_assert(bn254_fq_r_limbs.modulus[4] == 0x1585d978);
+static_assert(bn254_fq_r_limbs.modulus[5] == 0x2db40c0);
+static_assert(bn254_fq_r_limbs.modulus[6] == 0xa6e141);
+static_assert(bn254_fq_r_limbs.modulus[7] == 0xe5c2634);
+static_assert(bn254_fq_r_limbs.modulus[8] == 0x30644e);
 // BN254 Fq: first and last div_r_inv limbs
-static_assert(bn254_fq_limb29.div_r_inv[0] == 0x17789a9f);
-static_assert(bn254_fq_limb29.div_r_inv[8] == 0x6d7c4);
+static_assert(bn254_fq_r_limbs.div_r_inv[0] == 0x17789a9f);
+static_assert(bn254_fq_r_limbs.div_r_inv[8] == 0x6d7c4);
 
 // BN254 Fr: all 9 modulus limbs
-static constexpr auto bn254_fr_limb29 = compute_limb_constants<29, 9>(Bn254FrParams::modulus_uint256);
-static_assert(bn254_fr_limb29.modulus[0] == 0x10000001);
-static_assert(bn254_fr_limb29.modulus[1] == 0x1f0fac9f);
-static_assert(bn254_fr_limb29.modulus[2] == 0xe5c2450);
-static_assert(bn254_fr_limb29.modulus[3] == 0x7d090f3);
-static_assert(bn254_fr_limb29.modulus[4] == 0x1585d283);
-static_assert(bn254_fr_limb29.modulus[5] == 0x2db40c0);
-static_assert(bn254_fr_limb29.modulus[6] == 0xa6e141);
-static_assert(bn254_fr_limb29.modulus[7] == 0xe5c2634);
-static_assert(bn254_fr_limb29.modulus[8] == 0x30644e);
+static constexpr auto bn254_fr_r_limbs = compute_limb_constants<29, 9>(Bn254FrParams::modulus_uint256);
+static_assert(bn254_fr_r_limbs.modulus[0] == 0x10000001);
+static_assert(bn254_fr_r_limbs.modulus[1] == 0x1f0fac9f);
+static_assert(bn254_fr_r_limbs.modulus[2] == 0xe5c2450);
+static_assert(bn254_fr_r_limbs.modulus[3] == 0x7d090f3);
+static_assert(bn254_fr_r_limbs.modulus[4] == 0x1585d283);
+static_assert(bn254_fr_r_limbs.modulus[5] == 0x2db40c0);
+static_assert(bn254_fr_r_limbs.modulus[6] == 0xa6e141);
+static_assert(bn254_fr_r_limbs.modulus[7] == 0xe5c2634);
+static_assert(bn254_fr_r_limbs.modulus[8] == 0x30644e);
 // BN254 Fr: first and last div_r_inv limbs
-static_assert(bn254_fr_limb29.div_r_inv[0] == 0x18f05361);
-static_assert(bn254_fr_limb29.div_r_inv[8] == 0x183227);
+static_assert(bn254_fr_r_limbs.div_r_inv[0] == 0x18f05361);
+static_assert(bn254_fr_r_limbs.div_r_inv[8] == 0x183227);
 
 // secp256k1 Fq: first and last limbs
-static constexpr auto k1_fq_limb29 = compute_limb_constants<29, 9>(secp256k1::FqParams::modulus_uint256);
-static_assert(k1_fq_limb29.modulus[0] == 0x1ffffc2f);
-static_assert(k1_fq_limb29.modulus[8] == 0xffffff);
-static_assert(k1_fq_limb29.div_r_inv[0] == 0xed6544e);
-static_assert(k1_fq_limb29.div_r_inv[8] == 0x9129a9);
+static constexpr auto k1_fq_r_limbs = compute_limb_constants<29, 9>(secp256k1::FqParams::modulus_uint256);
+static_assert(k1_fq_r_limbs.modulus[0] == 0x1ffffc2f);
+static_assert(k1_fq_r_limbs.modulus[8] == 0xffffff);
+static_assert(k1_fq_r_limbs.div_r_inv[0] == 0xed6544e);
+static_assert(k1_fq_r_limbs.div_r_inv[8] == 0x9129a9);
 
 // secp256k1 Fr: first and last limbs
-static constexpr auto k1_fr_limb29 = compute_limb_constants<29, 9>(secp256k1::FrParams::modulus_uint256);
-static_assert(k1_fr_limb29.modulus[0] == 0x10364141);
-static_assert(k1_fr_limb29.modulus[8] == 0xffffff);
-static_assert(k1_fr_limb29.div_r_inv[0] == 0x3d864e);
-static_assert(k1_fr_limb29.div_r_inv[8] == 0xac4589);
+static constexpr auto k1_fr_r_limbs = compute_limb_constants<29, 9>(secp256k1::FrParams::modulus_uint256);
+static_assert(k1_fr_r_limbs.modulus[0] == 0x10364141);
+static_assert(k1_fr_r_limbs.modulus[8] == 0xffffff);
+static_assert(k1_fr_r_limbs.div_r_inv[0] == 0x3d864e);
+static_assert(k1_fr_r_limbs.div_r_inv[8] == 0xac4589);
 
 // secp256r1 Fq: first and last limbs
-static constexpr auto r1_fq_limb29 = compute_limb_constants<29, 9>(secp256r1::FqParams::modulus_uint256);
-static_assert(r1_fq_limb29.modulus[0] == 0x1fffffff);
-static_assert(r1_fq_limb29.modulus[8] == 0xffffff);
-static_assert(r1_fq_limb29.div_r_inv[0] == 0x0);
-static_assert(r1_fq_limb29.div_r_inv[8] == 0x0);
+static constexpr auto r1_fq_r_limbs = compute_limb_constants<29, 9>(secp256r1::FqParams::modulus_uint256);
+static_assert(r1_fq_r_limbs.modulus[0] == 0x1fffffff);
+static_assert(r1_fq_r_limbs.modulus[8] == 0xffffff);
+static_assert(r1_fq_r_limbs.div_r_inv[0] == 0x0);
+static_assert(r1_fq_r_limbs.div_r_inv[8] == 0x0);
 
 // secp256r1 Fr: first and last limbs
-static constexpr auto r1_fr_limb29 = compute_limb_constants<29, 9>(secp256r1::FrParams::modulus_uint256);
-static_assert(r1_fr_limb29.modulus[0] == 0x1c632551);
-static_assert(r1_fr_limb29.modulus[8] == 0xffffff);
-static_assert(r1_fr_limb29.div_r_inv[0] == 0x8517c79);
-static_assert(r1_fr_limb29.div_r_inv[8] == 0x7005e2);
+static constexpr auto r1_fr_r_limbs = compute_limb_constants<29, 9>(secp256r1::FrParams::modulus_uint256);
+static_assert(r1_fr_r_limbs.modulus[0] == 0x1c632551);
+static_assert(r1_fr_r_limbs.modulus[8] == 0xffffff);
+static_assert(r1_fr_r_limbs.div_r_inv[0] == 0x8517c79);
+static_assert(r1_fr_r_limbs.div_r_inv[8] == 0x7005e2);
 
 // ---- end static assertions ----
 

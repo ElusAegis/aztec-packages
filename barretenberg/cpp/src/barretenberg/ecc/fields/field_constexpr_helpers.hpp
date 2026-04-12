@@ -1,4 +1,5 @@
 #pragma once
+#include "field_montgomery_config.hpp"
 #include "barretenberg/numeric/uint256/uint256.hpp"
 #include <array>
 #include <cstdint>
@@ -84,13 +85,6 @@ static constexpr uint256_t compute_r_squared(const uint256_t& modulus, unsigned 
     auto [lo, hi] = R_mod_p.mul_extended(R_mod_p);
     return wide_mod(hi, lo, modulus);
 }
-
-// Platform-dependent Montgomery R exponent: native uses R=2^256, WASM uses R=2^261 (= 29*9 bits).
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-inline constexpr unsigned R_EXPONENT = 256;
-#else
-inline constexpr unsigned R_EXPONENT = 261;
-#endif
 
 // Split uint256_t into NUM_LIMBS limbs of LIMB_BITS bits each (little-endian).
 // Uses position-based extraction to avoid accumulator overflow.
@@ -183,5 +177,14 @@ static constexpr uint256_t to_montgomery_uint256(const uint256_t& canonical,
     auto [lo, hi] = canonical.mul_extended(R_mod_p);
     return wide_mod(hi, lo, modulus);
 }
+
+// Convenience: compute limb constants using the platform R configuration.
+// Only available on WASM / non-__int128 platforms where R_LIMB_BITS < 64.
+#if !defined(__SIZEOF_INT128__) || defined(__wasm__)
+static constexpr auto compute_r_limb_constants(const uint256_t& modulus)
+{
+    return compute_limb_constants<R_LIMB_BITS, R_NUM_LIMBS>(modulus);
+}
+#endif
 
 } // namespace bb

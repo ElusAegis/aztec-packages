@@ -21,6 +21,7 @@
 #include "barretenberg/common/serialize.hpp"
 #include "barretenberg/common/throw_or_abort.hpp"
 #include "barretenberg/common/utils.hpp"
+#include "barretenberg/ecc/fields/field_montgomery_config.hpp"
 #include <concepts>
 #include <cstdint>
 #include <iomanip>
@@ -32,10 +33,6 @@ namespace bb::numeric {
 class alignas(32) uint256_t {
 
   public:
-#if defined(__wasm__) || !defined(__SIZEOF_INT128__)
-#define WASM_NUM_LIMBS 9
-#define WASM_LIMB_BITS 29
-#endif
     constexpr uint256_t() noexcept
         : data{ 0, 0, 0, 0 }
     {}
@@ -251,7 +248,7 @@ class alignas(32) uint256_t {
                                     uint64_t& result_6,
                                     uint64_t& result_7,
                                     uint64_t& result_8);
-    [[nodiscard]] static constexpr std::array<uint64_t, WASM_NUM_LIMBS> wasm_convert(const uint64_t* data);
+    [[nodiscard]] static constexpr std::array<uint64_t, bb::R_NUM_LIMBS> wasm_convert(const uint64_t* data);
 #endif
 };
 
