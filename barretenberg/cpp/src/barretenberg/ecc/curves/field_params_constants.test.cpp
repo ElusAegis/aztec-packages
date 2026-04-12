@@ -196,8 +196,7 @@ TYPED_TEST_P(FieldConstantsTest, RSquared)
     using Params = typename TypeParam::Params;
     uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
     uint256_t expected = compute_r_squared(mod, bb::R_EXPONENT);
-    uint256_t actual{ Params::r_squared_0, Params::r_squared_1, Params::r_squared_2, Params::r_squared_3 };
-    EXPECT_EQ(expected, actual);
+    EXPECT_EQ(expected, Params::r_squared_uint256);
 }
 
 // Also verify R^2 for both R=256 and R=261 are correct (cross-platform validation)
@@ -283,12 +282,11 @@ TYPED_TEST_P(FieldConstantsTest, MontgomeryFormDerivation)
     using Field = typename TypeParam::Field;
     uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
 
-    // Verify coset_generator: field(canonical) should equal the Montgomery-form constant
+    // Verify coset_generator: field(canonical) should equal the Montgomery-form uint256_t
     Field coset_from_canonical(Params::canonical_coset_generator);
-    Field coset_from_limbs{
-        Params::coset_generator_0, Params::coset_generator_1, Params::coset_generator_2, Params::coset_generator_3
-    };
-    EXPECT_EQ(coset_from_canonical, coset_from_limbs);
+    Field coset_from_mont{ Params::coset_generator_mont.data[0], Params::coset_generator_mont.data[1],
+                           Params::coset_generator_mont.data[2], Params::coset_generator_mont.data[3] };
+    EXPECT_EQ(coset_from_canonical, coset_from_mont);
 }
 
 // Verify computed 29-bit modulus limbs reconstruct to the original modulus

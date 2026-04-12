@@ -758,7 +758,8 @@ template <class T> constexpr bool field<T>::is_zero() const noexcept
 
 template <class T> constexpr field<T> field<T>::get_root_of_unity(size_t subgroup_size) noexcept
 {
-    field r{ T::primitive_root_0, T::primitive_root_1, T::primitive_root_2, T::primitive_root_3 };
+    field r{ T::primitive_root_mont.data[0], T::primitive_root_mont.data[1],
+             T::primitive_root_mont.data[2], T::primitive_root_mont.data[3] };
     for (size_t i = primitive_root_log_size(); i > subgroup_size; --i) {
         r.self_sqr();
     }

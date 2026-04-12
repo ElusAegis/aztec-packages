@@ -88,23 +88,30 @@ static constexpr uint256_t compute_r_squared(const uint256_t& modulus, unsigned 
 
 // Split uint256_t into NUM_LIMBS limbs of LIMB_BITS bits each (little-endian).
 // Uses position-based extraction to avoid accumulator overflow.
+// When LIMB_BITS == 64, each limb is exactly one word (no masking/spanning needed).
 template <unsigned LIMB_BITS, unsigned NUM_LIMBS>
 static constexpr std::array<uint64_t, NUM_LIMBS> split_limbs(const uint256_t& v)
 {
-    static_assert(LIMB_BITS > 0 && LIMB_BITS < 64, "LIMB_BITS must be in (0, 64)");
+    static_assert(LIMB_BITS > 0 && LIMB_BITS <= 64, "LIMB_BITS must be in (0, 64]");
     static_assert(NUM_LIMBS * LIMB_BITS >= 256, "NUM_LIMBS * LIMB_BITS must cover 256 bits");
-    constexpr uint64_t mask = (1ULL << LIMB_BITS) - 1;
     std::array<uint64_t, NUM_LIMBS> limbs{};
-    for (unsigned i = 0; i < NUM_LIMBS; ++i) {
-        unsigned bit_pos = i * LIMB_BITS;
-        unsigned word_lo = bit_pos / 64;
-        unsigned shift_lo = bit_pos % 64;
-        uint64_t val = v.data[word_lo] >> shift_lo;
-        // If the limb spans a 64-bit word boundary, OR in bits from the next word
-        if (shift_lo + LIMB_BITS > 64 && word_lo + 1 < 4) {
-            val |= v.data[word_lo + 1] << (64 - shift_lo);
+    if constexpr (LIMB_BITS == 64) {
+        for (unsigned i = 0; i < NUM_LIMBS; ++i) {
+            limbs[i] = (i < 4) ? v.data[i] : 0;
         }
-        limbs[i] = val & mask;
+    } else {
+        constexpr uint64_t mask = (1ULL << LIMB_BITS) - 1;
+        for (unsigned i = 0; i < NUM_LIMBS; ++i) {
+            unsigned bit_pos = i * LIMB_BITS;
+            unsigned word_lo = bit_pos / 64;
+            unsigned shift_lo = bit_pos % 64;
+            uint64_t val = v.data[word_lo] >> shift_lo;
+            // If the limb spans a 64-bit word boundary, OR in bits from the next word
+            if (shift_lo + LIMB_BITS > 64 && word_lo + 1 < 4) {
+                val |= v.data[word_lo + 1] << (64 - shift_lo);
+            }
+            limbs[i] = val & mask;
+        }
     }
     return limbs;
 }
@@ -179,12 +186,11 @@ static constexpr uint256_t to_montgomery_uint256(const uint256_t& canonical,
 }
 
 // Convenience: compute limb constants using the platform R configuration.
-// Only available on WASM / non-__int128 platforms where R_LIMB_BITS < 64.
-#if !defined(__SIZEOF_INT128__) || defined(__wasm__)
+// On native (R_LIMB_BITS=64, R_NUM_LIMBS=4), the limbs are just the 4 uint64_t words.
+// On WASM (R_LIMB_BITS=29, R_NUM_LIMBS=9), the limbs are the 29-bit sub-word representation.
 static constexpr auto compute_r_limb_constants(const uint256_t& modulus)
 {
     return compute_limb_constants<R_LIMB_BITS, R_NUM_LIMBS>(modulus);
 }
-#endif
 
 } // namespace bb

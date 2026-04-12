@@ -37,55 +37,43 @@ class Bn254FrParams {
 
     static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
 
+    // R^2 mod p, where R = 2^R_EXPONENT. Used to convert elements into Montgomery form.
     static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
-    static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
-    static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
-    static constexpr uint64_t r_squared_2 = r_squared_uint256.data[2];
-    static constexpr uint64_t r_squared_3 = r_squared_uint256.data[3];
 
-    // -(Modulus^-1) mod 2^64
-    static constexpr uint64_t r_inv = 0xc2e1f593efffffffUL;
+    // -(p^{-1}) mod 2^64. See field_docs.hpp for Montgomery reduction details.
+    static constexpr uint64_t r_inv = compute_r_inv(modulus_0);
 
-    // 2^(-64) mod Modulus
-    static constexpr uint64_t r_inv_0 = 0x2d3e8053e396ee4dUL;
-    static constexpr uint64_t r_inv_1 = 0xca478dbeab3c92cdUL;
-    static constexpr uint64_t r_inv_2 = 0xb2d8f06f77f52a93UL;
-    static constexpr uint64_t r_inv_3 = 0x24d6ba07f7aa8f04UL;
+    // 2^{-64} mod p. Used in the Yuval/Barrett-Montgomery reduction variant.
+    static constexpr uint256_t r_inv_uint256 = compute_div_r_inv(modulus_uint256, 64);
+    static constexpr uint64_t r_inv_0 = r_inv_uint256.data[0];
+    static constexpr uint64_t r_inv_1 = r_inv_uint256.data[1];
+    static constexpr uint64_t r_inv_2 = r_inv_uint256.data[2];
+    static constexpr uint64_t r_inv_3 = r_inv_uint256.data[3];
 
-    // Canonical (non-Montgomery) cube root of unity in Fr
+    // Canonical (non-Montgomery) cube root of unity in Fr.
+    // Used for the GLV endomorphism: k * P decomposed via lambda (cube root in the scalar field).
     static constexpr uint256_t canonical_cube_root{
         0x8B17EA66B99C90DDUL, 0x5BFC41088D8DAAA7UL, 0xB3C4D79D41A91758UL, 0x0000000000000000UL
     };
 
-    // Canonical (non-Montgomery) primitive root of unity (order 2^28 subgroup) in Fr
+    // Canonical (non-Montgomery) primitive root of unity (order 2^28 subgroup) in Fr.
+    // Fr has high 2-adicity (2^28 | p-1), enabling FFT-based polynomial arithmetic.
     static constexpr uint256_t canonical_primitive_root{
         0x9BD61B6E725B19F0UL, 0x402D111E41112ED4UL, 0x00E0A7EB8EF62ABCUL, 0x2A3C09F0A58A7E85UL
     };
 
-    // Canonical (non-Montgomery) coset generator (= 5)
+    // Canonical (non-Montgomery) coset generator (= 5). Must be a quadratic non-residue mod p.
     static constexpr uint256_t canonical_coset_generator{
         0x0000000000000005UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL
     };
 
-    static constexpr uint256_t cube_root_mont = to_montgomery_uint256(canonical_cube_root, modulus_uint256, bb::R_EXPONENT);
-    static constexpr uint64_t cube_root_0 = cube_root_mont.data[0];
-    static constexpr uint64_t cube_root_1 = cube_root_mont.data[1];
-    static constexpr uint64_t cube_root_2 = cube_root_mont.data[2];
-    static constexpr uint64_t cube_root_3 = cube_root_mont.data[3];
-
+    // Montgomery-form representations, derived from canonical values
+    static constexpr uint256_t cube_root_mont =
+        to_montgomery_uint256(canonical_cube_root, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint256_t primitive_root_mont =
         to_montgomery_uint256(canonical_primitive_root, modulus_uint256, bb::R_EXPONENT);
-    static constexpr uint64_t primitive_root_0 = primitive_root_mont.data[0];
-    static constexpr uint64_t primitive_root_1 = primitive_root_mont.data[1];
-    static constexpr uint64_t primitive_root_2 = primitive_root_mont.data[2];
-    static constexpr uint64_t primitive_root_3 = primitive_root_mont.data[3];
-
     static constexpr uint256_t coset_generator_mont =
         to_montgomery_uint256(canonical_coset_generator, modulus_uint256, bb::R_EXPONENT);
-    static constexpr uint64_t coset_generator_0 = coset_generator_mont.data[0];
-    static constexpr uint64_t coset_generator_1 = coset_generator_mont.data[1];
-    static constexpr uint64_t coset_generator_2 = coset_generator_mont.data[2];
-    static constexpr uint64_t coset_generator_3 = coset_generator_mont.data[3];
 
     // Parameters used for quickly splitting a scalar into two endomorphism scalars for faster scalar multiplication
     // For specifics on how these have been derived, see ecc/fields/endomorphim_scalars.py

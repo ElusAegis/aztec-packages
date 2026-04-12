@@ -229,18 +229,18 @@ template <class Params_> struct alignas(32) field {
 
     static constexpr uint256_t modulus =
         uint256_t{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-    static constexpr uint256_t r_squared_uint{
-        Params_::r_squared_0, Params_::r_squared_1, Params_::r_squared_2, Params_::r_squared_3
-    };
-#if !defined(__SIZEOF_INT128__) || defined(__wasm__)
+    // R^2 mod p — used to convert elements into Montgomery form (multiply by R^2, reduce)
+    static constexpr uint256_t r_squared_uint = Params_::r_squared_uint256;
+
+    // Modulus and 2^{-R_LIMB_BITS} mod p, split into R_NUM_LIMBS limbs of R_LIMB_BITS bits.
+    // On native (64-bit limbs), these are just the 4 uint64_t words of the modulus.
+    // On WASM (29-bit limbs), these are the 9 sub-word limbs used by the schoolbook montmul.
     static constexpr auto r_limbs = compute_r_limb_constants(Params::modulus_uint256);
-#endif
     static constexpr field cube_root_of_unity()
     {
-        if constexpr (Params::cube_root_0 != 0) {
-            constexpr field result{
-                Params::cube_root_0, Params::cube_root_1, Params::cube_root_2, Params::cube_root_3
-            };
+        if constexpr (Params::cube_root_mont != uint256_t(0)) {
+            constexpr field result{ Params::cube_root_mont.data[0], Params::cube_root_mont.data[1],
+                                    Params::cube_root_mont.data[2], Params::cube_root_mont.data[3] };
             return result;
         } else {
             constexpr field two_inv = field(2).invert();
@@ -256,12 +256,8 @@ template <class Params_> struct alignas(32) field {
 
     static constexpr field coset_generator()
     {
-        const field result{
-            Params::coset_generator_0,
-            Params::coset_generator_1,
-            Params::coset_generator_2,
-            Params::coset_generator_3,
-        };
+        const field result{ Params::coset_generator_mont.data[0], Params::coset_generator_mont.data[1],
+                            Params::coset_generator_mont.data[2], Params::coset_generator_mont.data[3] };
         return result;
     }
 

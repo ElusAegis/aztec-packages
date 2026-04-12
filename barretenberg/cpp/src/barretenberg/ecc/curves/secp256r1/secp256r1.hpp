@@ -19,6 +19,7 @@ namespace bb::secp256r1 {
 struct FqParams {
     static constexpr const char* schema_name = "secp256r1_fq";
 
+    // p = 2^256 - 2^224 + 2^192 + 2^96 - 1
     static constexpr uint64_t modulus_0 = 0xFFFFFFFFFFFFFFFFULL;
     static constexpr uint64_t modulus_1 = 0x00000000FFFFFFFFULL;
     static constexpr uint64_t modulus_2 = 0x0000000000000000ULL;
@@ -27,40 +28,28 @@ struct FqParams {
     static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
 
     static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
-    static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
-    static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
-    static constexpr uint64_t r_squared_2 = r_squared_uint256.data[2];
-    static constexpr uint64_t r_squared_3 = r_squared_uint256.data[3];
 
-    static constexpr uint64_t r_inv = 1;
+    static constexpr uint64_t r_inv = compute_r_inv(modulus_0);
 
-    static constexpr uint64_t r_inv_0 = 0x100000000UL;
-    static constexpr uint64_t r_inv_1 = 0x0UL;
-    static constexpr uint64_t r_inv_2 = 0xffffffff00000001UL;
-    static constexpr uint64_t r_inv_3 = 0x0UL;
+    static constexpr uint256_t r_inv_uint256 = compute_div_r_inv(modulus_uint256, 64);
+    static constexpr uint64_t r_inv_0 = r_inv_uint256.data[0];
+    static constexpr uint64_t r_inv_1 = r_inv_uint256.data[1];
+    static constexpr uint64_t r_inv_2 = r_inv_uint256.data[2];
+    static constexpr uint64_t r_inv_3 = r_inv_uint256.data[3];
 
+    // No cube root of unity exists for secp256r1 Fq (p mod 3 != 1)
     static constexpr uint256_t canonical_cube_root{ 0UL, 0UL, 0UL, 0UL };
     static constexpr uint256_t canonical_primitive_root{ 0UL, 0UL, 0UL, 0UL };
     static constexpr uint256_t canonical_coset_generator{
         0x0000000000000003UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL
     };
 
-    static constexpr uint64_t cube_root_0 = 0UL;
-    static constexpr uint64_t cube_root_1 = 0UL;
-    static constexpr uint64_t cube_root_2 = 0UL;
-    static constexpr uint64_t cube_root_3 = 0UL;
-
-    static constexpr uint64_t primitive_root_0 = 0UL;
-    static constexpr uint64_t primitive_root_1 = 0UL;
-    static constexpr uint64_t primitive_root_2 = 0UL;
-    static constexpr uint64_t primitive_root_3 = 0UL;
-
+    static constexpr uint256_t cube_root_mont =
+        to_montgomery_uint256(canonical_cube_root, modulus_uint256, bb::R_EXPONENT);
+    static constexpr uint256_t primitive_root_mont =
+        to_montgomery_uint256(canonical_primitive_root, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint256_t coset_generator_mont =
         to_montgomery_uint256(canonical_coset_generator, modulus_uint256, bb::R_EXPONENT);
-    static constexpr uint64_t coset_generator_0 = coset_generator_mont.data[0];
-    static constexpr uint64_t coset_generator_1 = coset_generator_mont.data[1];
-    static constexpr uint64_t coset_generator_2 = coset_generator_mont.data[2];
-    static constexpr uint64_t coset_generator_3 = coset_generator_mont.data[3];
 
     static constexpr size_t PUBLIC_INPUTS_SIZE = BIGFIELD_PUBLIC_INPUTS_SIZE;
 };
@@ -80,17 +69,14 @@ struct FrParams {
     static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
 
     static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
-    static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
-    static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
-    static constexpr uint64_t r_squared_2 = r_squared_uint256.data[2];
-    static constexpr uint64_t r_squared_3 = r_squared_uint256.data[3];
 
-    static constexpr uint64_t r_inv = 14758798090332847183ULL;
+    static constexpr uint64_t r_inv = compute_r_inv(modulus_0);
 
-    static constexpr uint64_t r_inv_0 = 0x230102a06d6251dcUL;
-    static constexpr uint64_t r_inv_1 = 0xca5113bcafc4ea28UL;
-    static constexpr uint64_t r_inv_2 = 0xded10c5bee00bc4eUL;
-    static constexpr uint64_t r_inv_3 = 0xccd1c8aa212ef3a4UL;
+    static constexpr uint256_t r_inv_uint256 = compute_div_r_inv(modulus_uint256, 64);
+    static constexpr uint64_t r_inv_0 = r_inv_uint256.data[0];
+    static constexpr uint64_t r_inv_1 = r_inv_uint256.data[1];
+    static constexpr uint64_t r_inv_2 = r_inv_uint256.data[2];
+    static constexpr uint64_t r_inv_3 = r_inv_uint256.data[3];
 
     static constexpr uint256_t canonical_cube_root{ 0UL, 0UL, 0UL, 0UL };
     static constexpr uint256_t canonical_primitive_root{ 0UL, 0UL, 0UL, 0UL };
@@ -98,22 +84,12 @@ struct FrParams {
         0x0000000000000007UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL
     };
 
-    static constexpr uint64_t cube_root_0 = 0UL;
-    static constexpr uint64_t cube_root_1 = 0UL;
-    static constexpr uint64_t cube_root_2 = 0UL;
-    static constexpr uint64_t cube_root_3 = 0UL;
-
-    static constexpr uint64_t primitive_root_0 = 0UL;
-    static constexpr uint64_t primitive_root_1 = 0UL;
-    static constexpr uint64_t primitive_root_2 = 0UL;
-    static constexpr uint64_t primitive_root_3 = 0UL;
-
+    static constexpr uint256_t cube_root_mont =
+        to_montgomery_uint256(canonical_cube_root, modulus_uint256, bb::R_EXPONENT);
+    static constexpr uint256_t primitive_root_mont =
+        to_montgomery_uint256(canonical_primitive_root, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint256_t coset_generator_mont =
         to_montgomery_uint256(canonical_coset_generator, modulus_uint256, bb::R_EXPONENT);
-    static constexpr uint64_t coset_generator_0 = coset_generator_mont.data[0];
-    static constexpr uint64_t coset_generator_1 = coset_generator_mont.data[1];
-    static constexpr uint64_t coset_generator_2 = coset_generator_mont.data[2];
-    static constexpr uint64_t coset_generator_3 = coset_generator_mont.data[3];
 
     static constexpr size_t PUBLIC_INPUTS_SIZE = BIGFIELD_PUBLIC_INPUTS_SIZE;
 };
