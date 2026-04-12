@@ -85,28 +85,93 @@ static constexpr uint256_t compute_r_squared(const uint256_t& modulus, unsigned 
     return wide_mod(hi, lo, modulus);
 }
 
-// Split uint256_t into 9x29-bit limbs (little-endian)
-static constexpr std::array<uint64_t, 9> split_29bit(const uint256_t& v)
+// Platform-dependent Montgomery R exponent: native uses R=2^256, WASM uses R=2^261 (= 29*9 bits).
+#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
+inline constexpr unsigned R_EXPONENT = 256;
+#else
+inline constexpr unsigned R_EXPONENT = 261;
+#endif
+
+// Split uint256_t into NUM_LIMBS limbs of LIMB_BITS bits each (little-endian).
+// Uses position-based extraction to avoid accumulator overflow.
+template <unsigned LIMB_BITS, unsigned NUM_LIMBS>
+static constexpr std::array<uint64_t, NUM_LIMBS> split_limbs(const uint256_t& v)
 {
-    std::array<uint64_t, 9> limbs{};
-    constexpr uint64_t mask = (1ULL << 29) - 1;
-    uint64_t words[4] = { v.data[0], v.data[1], v.data[2], v.data[3] };
-
-    uint64_t acc = words[0];
-    unsigned bits_in_acc = 64;
-    unsigned word_idx = 1;
-
-    for (unsigned i = 0; i < 9; ++i) {
-        if (bits_in_acc < 29 && word_idx < 4) {
-            acc |= (words[word_idx] << bits_in_acc);
-            bits_in_acc += 64;
-            ++word_idx;
+    static_assert(LIMB_BITS > 0 && LIMB_BITS < 64, "LIMB_BITS must be in (0, 64)");
+    static_assert(NUM_LIMBS * LIMB_BITS >= 256, "NUM_LIMBS * LIMB_BITS must cover 256 bits");
+    constexpr uint64_t mask = (1ULL << LIMB_BITS) - 1;
+    std::array<uint64_t, NUM_LIMBS> limbs{};
+    for (unsigned i = 0; i < NUM_LIMBS; ++i) {
+        unsigned bit_pos = i * LIMB_BITS;
+        unsigned word_lo = bit_pos / 64;
+        unsigned shift_lo = bit_pos % 64;
+        uint64_t val = v.data[word_lo] >> shift_lo;
+        // If the limb spans a 64-bit word boundary, OR in bits from the next word
+        if (shift_lo + LIMB_BITS > 64 && word_lo + 1 < 4) {
+            val |= v.data[word_lo + 1] << (64 - shift_lo);
         }
-        limbs[i] = acc & mask;
-        acc >>= 29;
-        bits_in_acc -= 29;
+        limbs[i] = val & mask;
     }
     return limbs;
+}
+
+// Compute 2^{-LIMB_BITS} mod p by repeated halving.
+// "Halve mod p" means: if odd, add p first (making it even), then right-shift by 1.
+// We need to handle the 257-bit carry when adding p to an odd value.
+static constexpr uint256_t compute_div_r_inv(const uint256_t& p, unsigned limb_bits)
+{
+    uint256_t result(1);
+    for (unsigned i = 0; i < limb_bits; ++i) {
+        uint64_t carry = 0;
+        if ((result.data[0] & 1) != 0) {
+            // Add p, tracking 257-bit carry via manual carry chain
+            uint64_t s0 = result.data[0] + p.data[0];
+            uint64_t c0 = (s0 < result.data[0]) ? 1ULL : 0ULL;
+            uint64_t s1 = result.data[1] + p.data[1] + c0;
+            uint64_t c1 = (c0 != 0) ? ((s1 <= result.data[1]) ? 1ULL : 0ULL)
+                                     : ((s1 < result.data[1]) ? 1ULL : 0ULL);
+            uint64_t s2 = result.data[2] + p.data[2] + c1;
+            uint64_t c2 = (c1 != 0) ? ((s2 <= result.data[2]) ? 1ULL : 0ULL)
+                                     : ((s2 < result.data[2]) ? 1ULL : 0ULL);
+            uint64_t s3 = result.data[3] + p.data[3] + c2;
+            carry = (c2 != 0) ? ((s3 <= result.data[3]) ? 1ULL : 0ULL)
+                              : ((s3 < result.data[3]) ? 1ULL : 0ULL);
+            result = uint256_t(s0, s1, s2, s3);
+        }
+        // Right-shift by 1, feeding carry into bit 255
+        result = uint256_t((result.data[0] >> 1) | (result.data[1] << 63),
+                           (result.data[1] >> 1) | (result.data[2] << 63),
+                           (result.data[2] >> 1) | (result.data[3] << 63),
+                           (result.data[3] >> 1) | (carry << 63));
+    }
+    return result;
+}
+
+// Precomputed limb constants for a given limb representation.
+template <unsigned LIMB_BITS, unsigned NUM_LIMBS> struct LimbConstants {
+    std::array<uint64_t, NUM_LIMBS> modulus;
+    std::array<uint64_t, NUM_LIMBS> div_r_inv;
+};
+
+// Factory: compute LimbConstants from a uint256_t modulus.
+template <unsigned LIMB_BITS, unsigned NUM_LIMBS>
+static constexpr LimbConstants<LIMB_BITS, NUM_LIMBS> compute_limb_constants(const uint256_t& modulus)
+{
+    LimbConstants<LIMB_BITS, NUM_LIMBS> result{};
+    result.modulus = split_limbs<LIMB_BITS, NUM_LIMBS>(modulus);
+    uint256_t div_r = compute_div_r_inv(modulus, LIMB_BITS);
+    result.div_r_inv = split_limbs<LIMB_BITS, NUM_LIMBS>(div_r);
+    return result;
+}
+
+// Convert a constexpr uint64_t array to a double array (for potential FMA paths).
+template <size_t N> static constexpr std::array<double, N> to_double_array(const std::array<uint64_t, N>& arr)
+{
+    std::array<double, N> result{};
+    for (size_t i = 0; i < N; ++i) {
+        result[i] = static_cast<double>(arr[i]);
+    }
+    return result;
 }
 
 // Compute (canonical * 2^r_exponent) mod p — converts from canonical to Montgomery form.

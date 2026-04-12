@@ -538,15 +538,15 @@ template <class T> constexpr field<T> field<T>::montgomery_mul_big(const field& 
     uint64_t r_temp_7;
     uint64_t r_temp_8;
 
-    r_temp_0 = temp_9 - wasm_modulus[0];
-    r_temp_1 = temp_10 - wasm_modulus[1] - ((r_temp_0) >> 63);
-    r_temp_2 = temp_11 - wasm_modulus[2] - ((r_temp_1) >> 63);
-    r_temp_3 = temp_12 - wasm_modulus[3] - ((r_temp_2) >> 63);
-    r_temp_4 = temp_13 - wasm_modulus[4] - ((r_temp_3) >> 63);
-    r_temp_5 = temp_14 - wasm_modulus[5] - ((r_temp_4) >> 63);
-    r_temp_6 = temp_15 - wasm_modulus[6] - ((r_temp_5) >> 63);
-    r_temp_7 = temp_16 - wasm_modulus[7] - ((r_temp_6) >> 63);
-    r_temp_8 = temp_17 - wasm_modulus[8] - ((r_temp_7) >> 63);
+    r_temp_0 = temp_9 - limb29.modulus[0];
+    r_temp_1 = temp_10 - limb29.modulus[1] - ((r_temp_0) >> 63);
+    r_temp_2 = temp_11 - limb29.modulus[2] - ((r_temp_1) >> 63);
+    r_temp_3 = temp_12 - limb29.modulus[3] - ((r_temp_2) >> 63);
+    r_temp_4 = temp_13 - limb29.modulus[4] - ((r_temp_3) >> 63);
+    r_temp_5 = temp_14 - limb29.modulus[5] - ((r_temp_4) >> 63);
+    r_temp_6 = temp_15 - limb29.modulus[6] - ((r_temp_5) >> 63);
+    r_temp_7 = temp_16 - limb29.modulus[7] - ((r_temp_6) >> 63);
+    r_temp_8 = temp_17 - limb29.modulus[8] - ((r_temp_7) >> 63);
 
     // Depending on whether the subtraction underflowed, choose original value or the result of subtraction
     uint64_t new_mask = 0 - (r_temp_8 >> 63);
@@ -635,15 +635,15 @@ constexpr void field<T>::wasm_reduce(uint64_t& result_0,
     constexpr uint64_t mask = 0x1fffffff;
     constexpr uint64_t r_inv = T::r_inv & mask; //  -(modulus ^ { -1 }) modulo 2 ^ WASM_LIMB_BITS
     uint64_t k = (result_0 * r_inv) & mask;
-    result_0 += k * wasm_modulus[0];
-    result_1 += k * wasm_modulus[1] + (result_0 >> WASM_LIMB_BITS);
-    result_2 += k * wasm_modulus[2];
-    result_3 += k * wasm_modulus[3];
-    result_4 += k * wasm_modulus[4];
-    result_5 += k * wasm_modulus[5];
-    result_6 += k * wasm_modulus[6];
-    result_7 += k * wasm_modulus[7];
-    result_8 += k * wasm_modulus[8];
+    result_0 += k * limb29.modulus[0];
+    result_1 += k * limb29.modulus[1] + (result_0 >> WASM_LIMB_BITS);
+    result_2 += k * limb29.modulus[2];
+    result_3 += k * limb29.modulus[3];
+    result_4 += k * limb29.modulus[4];
+    result_5 += k * limb29.modulus[5];
+    result_6 += k * limb29.modulus[6];
+    result_7 += k * limb29.modulus[7];
+    result_8 += k * limb29.modulus[8];
 }
 
 /**
@@ -657,7 +657,7 @@ constexpr void field<T>::wasm_reduce(uint64_t& result_0,
  *   x / 2^{29} = (x - result_0) / 2^{29} + result_0 * 2^{-29}  (mod p)
  *
  * The first term is just the higher limbs (an integer shift since result_0 contains all low bits).
- * The second term is result_0 * r_inv, where r_inv = 2^{-29} mod p is precomputed as `wasm_r_inv`.
+ * The second term is result_0 * r_inv, where r_inv = 2^{-29} mod p is precomputed as `limb29.div_r_inv`.
  *
  * After calling this method, result_0 is discarded and result_1..result_9 hold x / 2^{29} mod p.
  *
@@ -680,15 +680,15 @@ constexpr void field<T>::wasm_reduce_yuval(uint64_t& result_0,
 {
     constexpr uint64_t mask = 0x1fffffff;
     const uint64_t result_0_masked = result_0 & mask;
-    result_1 += result_0_masked * wasm_r_inv[0] + (result_0 >> WASM_LIMB_BITS);
-    result_2 += result_0_masked * wasm_r_inv[1];
-    result_3 += result_0_masked * wasm_r_inv[2];
-    result_4 += result_0_masked * wasm_r_inv[3];
-    result_5 += result_0_masked * wasm_r_inv[4];
-    result_6 += result_0_masked * wasm_r_inv[5];
-    result_7 += result_0_masked * wasm_r_inv[6];
-    result_8 += result_0_masked * wasm_r_inv[7];
-    result_9 += result_0_masked * wasm_r_inv[8];
+    result_1 += result_0_masked * limb29.div_r_inv[0] + (result_0 >> WASM_LIMB_BITS);
+    result_2 += result_0_masked * limb29.div_r_inv[1];
+    result_3 += result_0_masked * limb29.div_r_inv[2];
+    result_4 += result_0_masked * limb29.div_r_inv[3];
+    result_5 += result_0_masked * limb29.div_r_inv[4];
+    result_6 += result_0_masked * limb29.div_r_inv[5];
+    result_7 += result_0_masked * limb29.div_r_inv[6];
+    result_8 += result_0_masked * limb29.div_r_inv[7];
+    result_9 += result_0_masked * limb29.div_r_inv[8];
 }
 /**
  * @brief Convert 4 64-bit limbs into 9 29-bit limbs

@@ -26,13 +26,7 @@ struct FqParams {
 
     static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
 
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    static constexpr unsigned R_EXPONENT = 256;
-#else
-    static constexpr unsigned R_EXPONENT = 261;
-#endif
-
-    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, R_EXPONENT);
+    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
     static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
     static constexpr uint64_t r_squared_2 = r_squared_uint256.data[2];
@@ -62,31 +56,11 @@ struct FqParams {
     static constexpr uint64_t primitive_root_3 = 0UL;
 
     static constexpr uint256_t coset_generator_mont =
-        to_montgomery_uint256(canonical_coset_generator, modulus_uint256, R_EXPONENT);
+        to_montgomery_uint256(canonical_coset_generator, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t coset_generator_0 = coset_generator_mont.data[0];
     static constexpr uint64_t coset_generator_1 = coset_generator_mont.data[1];
     static constexpr uint64_t coset_generator_2 = coset_generator_mont.data[2];
     static constexpr uint64_t coset_generator_3 = coset_generator_mont.data[3];
-
-    static constexpr uint64_t modulus_wasm_0 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_1 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_2 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_3 = 0x1ff;
-    static constexpr uint64_t modulus_wasm_4 = 0x0;
-    static constexpr uint64_t modulus_wasm_5 = 0x0;
-    static constexpr uint64_t modulus_wasm_6 = 0x40000;
-    static constexpr uint64_t modulus_wasm_7 = 0x1fe00000;
-    static constexpr uint64_t modulus_wasm_8 = 0xffffff;
-
-    static constexpr uint64_t r_inv_wasm_0 = 0x0;
-    static constexpr uint64_t r_inv_wasm_1 = 0x0;
-    static constexpr uint64_t r_inv_wasm_2 = 0x200;
-    static constexpr uint64_t r_inv_wasm_3 = 0x0;
-    static constexpr uint64_t r_inv_wasm_4 = 0x0;
-    static constexpr uint64_t r_inv_wasm_5 = 0x40000;
-    static constexpr uint64_t r_inv_wasm_6 = 0x1fe00000;
-    static constexpr uint64_t r_inv_wasm_7 = 0xffffff;
-    static constexpr uint64_t r_inv_wasm_8 = 0x0;
 
     static constexpr size_t PUBLIC_INPUTS_SIZE = BIGFIELD_PUBLIC_INPUTS_SIZE;
 };
@@ -105,13 +79,7 @@ struct FrParams {
 
     static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
 
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    static constexpr unsigned R_EXPONENT = 256;
-#else
-    static constexpr unsigned R_EXPONENT = 261;
-#endif
-
-    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, R_EXPONENT);
+    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
     static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
     static constexpr uint64_t r_squared_2 = r_squared_uint256.data[2];
@@ -141,31 +109,11 @@ struct FrParams {
     static constexpr uint64_t primitive_root_3 = 0UL;
 
     static constexpr uint256_t coset_generator_mont =
-        to_montgomery_uint256(canonical_coset_generator, modulus_uint256, R_EXPONENT);
+        to_montgomery_uint256(canonical_coset_generator, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t coset_generator_0 = coset_generator_mont.data[0];
     static constexpr uint64_t coset_generator_1 = coset_generator_mont.data[1];
     static constexpr uint64_t coset_generator_2 = coset_generator_mont.data[2];
     static constexpr uint64_t coset_generator_3 = coset_generator_mont.data[3];
-
-    static constexpr uint64_t modulus_wasm_0 = 0x1c632551;
-    static constexpr uint64_t modulus_wasm_1 = 0x1dce5617;
-    static constexpr uint64_t modulus_wasm_2 = 0x5e7a13c;
-    static constexpr uint64_t modulus_wasm_3 = 0xdf55b4e;
-    static constexpr uint64_t modulus_wasm_4 = 0x1ffffbce;
-    static constexpr uint64_t modulus_wasm_5 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_6 = 0x3ffff;
-    static constexpr uint64_t modulus_wasm_7 = 0x1fe00000;
-    static constexpr uint64_t modulus_wasm_8 = 0xffffff;
-
-    static constexpr uint64_t r_inv_wasm_0 = 0x8517c79;
-    static constexpr uint64_t r_inv_wasm_1 = 0x1edc694;
-    static constexpr uint64_t r_inv_wasm_2 = 0x459ee5c;
-    static constexpr uint64_t r_inv_wasm_3 = 0x705a6a8;
-    static constexpr uint64_t r_inv_wasm_4 = 0x1ffffe2a;
-    static constexpr uint64_t r_inv_wasm_5 = 0x113bffff;
-    static constexpr uint64_t r_inv_wasm_6 = 0x1621c017;
-    static constexpr uint64_t r_inv_wasm_7 = 0xef1ff43;
-    static constexpr uint64_t r_inv_wasm_8 = 0x7005e2;
 
     static constexpr size_t PUBLIC_INPUTS_SIZE = BIGFIELD_PUBLIC_INPUTS_SIZE;
 };

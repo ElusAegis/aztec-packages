@@ -31,6 +31,71 @@
 
 using namespace bb;
 
+// ---- Static assertions: computed 29-bit limb constants match old hardcoded values ----
+
+// R_EXPONENT on native build
+static_assert(bb::R_EXPONENT == 256, "R_EXPONENT should be 256 on native build");
+
+// BN254 Fq: all 9 modulus limbs
+static constexpr auto bn254_fq_limb29 = compute_limb_constants<29, 9>(Bn254FqParams::modulus_uint256);
+static_assert(bn254_fq_limb29.modulus[0] == 0x187cfd47);
+static_assert(bn254_fq_limb29.modulus[1] == 0x10460b6);
+static_assert(bn254_fq_limb29.modulus[2] == 0x1c72a34f);
+static_assert(bn254_fq_limb29.modulus[3] == 0x2d522d0);
+static_assert(bn254_fq_limb29.modulus[4] == 0x1585d978);
+static_assert(bn254_fq_limb29.modulus[5] == 0x2db40c0);
+static_assert(bn254_fq_limb29.modulus[6] == 0xa6e141);
+static_assert(bn254_fq_limb29.modulus[7] == 0xe5c2634);
+static_assert(bn254_fq_limb29.modulus[8] == 0x30644e);
+// BN254 Fq: first and last div_r_inv limbs
+static_assert(bn254_fq_limb29.div_r_inv[0] == 0x17789a9f);
+static_assert(bn254_fq_limb29.div_r_inv[8] == 0x6d7c4);
+
+// BN254 Fr: all 9 modulus limbs
+static constexpr auto bn254_fr_limb29 = compute_limb_constants<29, 9>(Bn254FrParams::modulus_uint256);
+static_assert(bn254_fr_limb29.modulus[0] == 0x10000001);
+static_assert(bn254_fr_limb29.modulus[1] == 0x1f0fac9f);
+static_assert(bn254_fr_limb29.modulus[2] == 0xe5c2450);
+static_assert(bn254_fr_limb29.modulus[3] == 0x7d090f3);
+static_assert(bn254_fr_limb29.modulus[4] == 0x1585d283);
+static_assert(bn254_fr_limb29.modulus[5] == 0x2db40c0);
+static_assert(bn254_fr_limb29.modulus[6] == 0xa6e141);
+static_assert(bn254_fr_limb29.modulus[7] == 0xe5c2634);
+static_assert(bn254_fr_limb29.modulus[8] == 0x30644e);
+// BN254 Fr: first and last div_r_inv limbs
+static_assert(bn254_fr_limb29.div_r_inv[0] == 0x18f05361);
+static_assert(bn254_fr_limb29.div_r_inv[8] == 0x183227);
+
+// secp256k1 Fq: first and last limbs
+static constexpr auto k1_fq_limb29 = compute_limb_constants<29, 9>(secp256k1::FqParams::modulus_uint256);
+static_assert(k1_fq_limb29.modulus[0] == 0x1ffffc2f);
+static_assert(k1_fq_limb29.modulus[8] == 0xffffff);
+static_assert(k1_fq_limb29.div_r_inv[0] == 0xed6544e);
+static_assert(k1_fq_limb29.div_r_inv[8] == 0x9129a9);
+
+// secp256k1 Fr: first and last limbs
+static constexpr auto k1_fr_limb29 = compute_limb_constants<29, 9>(secp256k1::FrParams::modulus_uint256);
+static_assert(k1_fr_limb29.modulus[0] == 0x10364141);
+static_assert(k1_fr_limb29.modulus[8] == 0xffffff);
+static_assert(k1_fr_limb29.div_r_inv[0] == 0x3d864e);
+static_assert(k1_fr_limb29.div_r_inv[8] == 0xac4589);
+
+// secp256r1 Fq: first and last limbs
+static constexpr auto r1_fq_limb29 = compute_limb_constants<29, 9>(secp256r1::FqParams::modulus_uint256);
+static_assert(r1_fq_limb29.modulus[0] == 0x1fffffff);
+static_assert(r1_fq_limb29.modulus[8] == 0xffffff);
+static_assert(r1_fq_limb29.div_r_inv[0] == 0x0);
+static_assert(r1_fq_limb29.div_r_inv[8] == 0x0);
+
+// secp256r1 Fr: first and last limbs
+static constexpr auto r1_fr_limb29 = compute_limb_constants<29, 9>(secp256r1::FrParams::modulus_uint256);
+static_assert(r1_fr_limb29.modulus[0] == 0x1c632551);
+static_assert(r1_fr_limb29.modulus[8] == 0xffffff);
+static_assert(r1_fr_limb29.div_r_inv[0] == 0x8517c79);
+static_assert(r1_fr_limb29.div_r_inv[8] == 0x7005e2);
+
+// ---- end static assertions ----
+
 namespace {
 
 uint256_t from_decimal(const std::string& dec_str)
@@ -122,12 +187,12 @@ TYPED_TEST_P(FieldConstantsTest, Modulus)
     EXPECT_EQ(expected, actual);
 }
 
-// Verify R^2 mod p is correctly derived from R_EXPONENT
+// Verify R^2 mod p is correctly derived from bb::R_EXPONENT
 TYPED_TEST_P(FieldConstantsTest, RSquared)
 {
     using Params = typename TypeParam::Params;
     uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-    uint256_t expected = compute_r_squared(mod, Params::R_EXPONENT);
+    uint256_t expected = compute_r_squared(mod, bb::R_EXPONENT);
     uint256_t actual{ Params::r_squared_0, Params::r_squared_1, Params::r_squared_2, Params::r_squared_3 };
     EXPECT_EQ(expected, actual);
 }
@@ -223,36 +288,31 @@ TYPED_TEST_P(FieldConstantsTest, MontgomeryFormDerivation)
     EXPECT_EQ(coset_from_canonical, coset_from_limbs);
 }
 
+// Verify computed 29-bit modulus limbs reconstruct to the original modulus
 TYPED_TEST_P(FieldConstantsTest, WasmModulusConsistency)
 {
     using Params = typename TypeParam::Params;
     uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-    constexpr std::array<uint64_t, 9> wasm_limbs = { Params::modulus_wasm_0, Params::modulus_wasm_1,
-                                                     Params::modulus_wasm_2, Params::modulus_wasm_3,
-                                                     Params::modulus_wasm_4, Params::modulus_wasm_5,
-                                                     Params::modulus_wasm_6, Params::modulus_wasm_7,
-                                                     Params::modulus_wasm_8 };
-    uint512_t wasm_modulus = 0;
+    constexpr auto lc = compute_limb_constants<29, 9>(Params::modulus_uint256);
+    uint512_t reconstructed = 0;
     for (size_t i = 0; i < 9; i++) {
-        wasm_modulus += uint512_t(wasm_limbs[i]) << (29UL * i);
-        EXPECT_LT(wasm_limbs[i], uint64_t(1) << 29);
+        reconstructed += uint512_t(lc.modulus[i]) << (29UL * i);
+        EXPECT_LT(lc.modulus[i], uint64_t(1) << 29);
     }
-    EXPECT_EQ(wasm_modulus.lo, mod);
-    EXPECT_EQ(wasm_modulus.hi, uint256_t(0));
+    EXPECT_EQ(reconstructed.lo, mod);
+    EXPECT_EQ(reconstructed.hi, uint256_t(0));
 }
 
+// Verify computed 2^{-29} mod p matches independent calculation
 TYPED_TEST_P(FieldConstantsTest, WasmPowMinus29)
 {
     using Params = typename TypeParam::Params;
     uint256_t mod{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-    constexpr std::array<uint64_t, 9> r_inv_wasm_limbs = {
-        Params::r_inv_wasm_0, Params::r_inv_wasm_1, Params::r_inv_wasm_2, Params::r_inv_wasm_3, Params::r_inv_wasm_4,
-        Params::r_inv_wasm_5, Params::r_inv_wasm_6, Params::r_inv_wasm_7, Params::r_inv_wasm_8
-    };
+    constexpr auto lc = compute_limb_constants<29, 9>(Params::modulus_uint256);
     uint512_t r_inv_wasm = 0;
     for (size_t i = 0; i < 9; i++) {
-        r_inv_wasm += uint512_t(r_inv_wasm_limbs[i]) << (29UL * i);
-        EXPECT_LT(r_inv_wasm_limbs[i], uint64_t(1) << 29);
+        r_inv_wasm += uint512_t(lc.div_r_inv[i]) << (29UL * i);
+        EXPECT_LT(lc.div_r_inv[i], uint64_t(1) << 29);
     }
     uint512_t two_29 = uint512_t(1) << 29;
     uint512_t expected = two_29.invmod(mod);

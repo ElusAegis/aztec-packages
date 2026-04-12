@@ -26,13 +26,7 @@ struct FqParams {
 
     static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
 
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    static constexpr unsigned R_EXPONENT = 256;
-#else
-    static constexpr unsigned R_EXPONENT = 261;
-#endif
-
-    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, R_EXPONENT);
+    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
     static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
     static constexpr uint64_t r_squared_2 = r_squared_uint256.data[2];
@@ -53,7 +47,8 @@ struct FqParams {
         0x0000000000000003UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL
     };
 
-    static constexpr uint256_t cube_root_mont = to_montgomery_uint256(canonical_cube_root, modulus_uint256, R_EXPONENT);
+    static constexpr uint256_t cube_root_mont =
+        to_montgomery_uint256(canonical_cube_root, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t cube_root_0 = cube_root_mont.data[0];
     static constexpr uint64_t cube_root_1 = cube_root_mont.data[1];
     static constexpr uint64_t cube_root_2 = cube_root_mont.data[2];
@@ -65,31 +60,11 @@ struct FqParams {
     static constexpr uint64_t primitive_root_3 = 0UL;
 
     static constexpr uint256_t coset_generator_mont =
-        to_montgomery_uint256(canonical_coset_generator, modulus_uint256, R_EXPONENT);
+        to_montgomery_uint256(canonical_coset_generator, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t coset_generator_0 = coset_generator_mont.data[0];
     static constexpr uint64_t coset_generator_1 = coset_generator_mont.data[1];
     static constexpr uint64_t coset_generator_2 = coset_generator_mont.data[2];
     static constexpr uint64_t coset_generator_3 = coset_generator_mont.data[3];
-
-    static constexpr uint64_t modulus_wasm_0 = 0x1ffffc2f;
-    static constexpr uint64_t modulus_wasm_1 = 0x1ffffff7;
-    static constexpr uint64_t modulus_wasm_2 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_3 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_4 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_5 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_6 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_7 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_8 = 0xffffff;
-
-    static constexpr uint64_t r_inv_wasm_0 = 0xed6544e;
-    static constexpr uint64_t r_inv_wasm_1 = 0x1ffffffb;
-    static constexpr uint64_t r_inv_wasm_2 = 0x1fffffff;
-    static constexpr uint64_t r_inv_wasm_3 = 0x1fffffff;
-    static constexpr uint64_t r_inv_wasm_4 = 0x1fffffff;
-    static constexpr uint64_t r_inv_wasm_5 = 0x1fffffff;
-    static constexpr uint64_t r_inv_wasm_6 = 0x1fffffff;
-    static constexpr uint64_t r_inv_wasm_7 = 0x10ffffff;
-    static constexpr uint64_t r_inv_wasm_8 = 0x9129a9;
 
     static constexpr size_t PUBLIC_INPUTS_SIZE = BIGFIELD_PUBLIC_INPUTS_SIZE;
     static constexpr char schema_name[] = "secp256k1_fq";
@@ -107,13 +82,7 @@ struct FrParams {
 
     static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
 
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    static constexpr unsigned R_EXPONENT = 256;
-#else
-    static constexpr unsigned R_EXPONENT = 261;
-#endif
-
-    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, R_EXPONENT);
+    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
     static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
     static constexpr uint64_t r_squared_2 = r_squared_uint256.data[2];
@@ -134,7 +103,8 @@ struct FrParams {
         0x0000000000000005UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL
     };
 
-    static constexpr uint256_t cube_root_mont = to_montgomery_uint256(canonical_cube_root, modulus_uint256, R_EXPONENT);
+    static constexpr uint256_t cube_root_mont =
+        to_montgomery_uint256(canonical_cube_root, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t cube_root_0 = cube_root_mont.data[0];
     static constexpr uint64_t cube_root_1 = cube_root_mont.data[1];
     static constexpr uint64_t cube_root_2 = cube_root_mont.data[2];
@@ -146,7 +116,7 @@ struct FrParams {
     static constexpr uint64_t primitive_root_3 = 0UL;
 
     static constexpr uint256_t coset_generator_mont =
-        to_montgomery_uint256(canonical_coset_generator, modulus_uint256, R_EXPONENT);
+        to_montgomery_uint256(canonical_coset_generator, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t coset_generator_0 = coset_generator_mont.data[0];
     static constexpr uint64_t coset_generator_1 = coset_generator_mont.data[1];
     static constexpr uint64_t coset_generator_2 = coset_generator_mont.data[2];
@@ -166,26 +136,6 @@ struct FrParams {
 
     static constexpr uint64_t endo_g2_lo = 0xE86C90E49284EB15ULL;
     static constexpr uint64_t endo_g2_mid = 0x3086D221A7D46BCDULL;
-
-    static constexpr uint64_t modulus_wasm_0 = 0x10364141;
-    static constexpr uint64_t modulus_wasm_1 = 0x1e92f466;
-    static constexpr uint64_t modulus_wasm_2 = 0x12280eef;
-    static constexpr uint64_t modulus_wasm_3 = 0x1db9cd5e;
-    static constexpr uint64_t modulus_wasm_4 = 0x1fffebaa;
-    static constexpr uint64_t modulus_wasm_5 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_6 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_7 = 0x1fffffff;
-    static constexpr uint64_t modulus_wasm_8 = 0xffffff;
-
-    static constexpr uint64_t r_inv_wasm_0 = 0x3d864e;
-    static constexpr uint64_t r_inv_wasm_1 = 0x8b9f61c;
-    static constexpr uint64_t r_inv_wasm_2 = 0x3df60c0;
-    static constexpr uint64_t r_inv_wasm_3 = 0xa3c71eb;
-    static constexpr uint64_t r_inv_wasm_4 = 0x1ffff251;
-    static constexpr uint64_t r_inv_wasm_5 = 0x1fffffff;
-    static constexpr uint64_t r_inv_wasm_6 = 0x1fffffff;
-    static constexpr uint64_t r_inv_wasm_7 = 0x1effffff;
-    static constexpr uint64_t r_inv_wasm_8 = 0xac4589;
 
     static constexpr size_t PUBLIC_INPUTS_SIZE = BIGFIELD_PUBLIC_INPUTS_SIZE;
     static constexpr char schema_name[] = "secp256k1_fr";

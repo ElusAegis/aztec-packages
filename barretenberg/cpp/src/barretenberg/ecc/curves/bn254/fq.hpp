@@ -36,13 +36,7 @@ class Bn254FqParams {
 
     static constexpr uint256_t modulus_uint256{ modulus_0, modulus_1, modulus_2, modulus_3 };
 
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    static constexpr unsigned R_EXPONENT = 256;
-#else
-    static constexpr unsigned R_EXPONENT = 261;
-#endif
-
-    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, R_EXPONENT);
+    static constexpr uint256_t r_squared_uint256 = compute_r_squared(modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t r_squared_0 = r_squared_uint256.data[0];
     static constexpr uint64_t r_squared_1 = r_squared_uint256.data[1];
     static constexpr uint64_t r_squared_2 = r_squared_uint256.data[2];
@@ -70,7 +64,7 @@ class Bn254FqParams {
         0x0000000000000003UL, 0x0000000000000000UL, 0x0000000000000000UL, 0x0000000000000000UL
     };
 
-    static constexpr uint256_t cube_root_mont = to_montgomery_uint256(canonical_cube_root, modulus_uint256, R_EXPONENT);
+    static constexpr uint256_t cube_root_mont = to_montgomery_uint256(canonical_cube_root, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t cube_root_0 = cube_root_mont.data[0];
     static constexpr uint64_t cube_root_1 = cube_root_mont.data[1];
     static constexpr uint64_t cube_root_2 = cube_root_mont.data[2];
@@ -82,33 +76,11 @@ class Bn254FqParams {
     static constexpr uint64_t primitive_root_3 = 0UL;
 
     static constexpr uint256_t coset_generator_mont =
-        to_montgomery_uint256(canonical_coset_generator, modulus_uint256, R_EXPONENT);
+        to_montgomery_uint256(canonical_coset_generator, modulus_uint256, bb::R_EXPONENT);
     static constexpr uint64_t coset_generator_0 = coset_generator_mont.data[0];
     static constexpr uint64_t coset_generator_1 = coset_generator_mont.data[1];
     static constexpr uint64_t coset_generator_2 = coset_generator_mont.data[2];
     static constexpr uint64_t coset_generator_3 = coset_generator_mont.data[3];
-
-    // Modulus split into 9 29-bit limbs (for WASM arithmetic)
-    static constexpr uint64_t modulus_wasm_0 = 0x187cfd47;
-    static constexpr uint64_t modulus_wasm_1 = 0x10460b6;
-    static constexpr uint64_t modulus_wasm_2 = 0x1c72a34f;
-    static constexpr uint64_t modulus_wasm_3 = 0x2d522d0;
-    static constexpr uint64_t modulus_wasm_4 = 0x1585d978;
-    static constexpr uint64_t modulus_wasm_5 = 0x2db40c0;
-    static constexpr uint64_t modulus_wasm_6 = 0xa6e141;
-    static constexpr uint64_t modulus_wasm_7 = 0xe5c2634;
-    static constexpr uint64_t modulus_wasm_8 = 0x30644e;
-
-    // 2^(-29) mod Modulus as 9 29-bit limbs (for WASM reduction)
-    static constexpr uint64_t r_inv_wasm_0 = 0x17789a9f;
-    static constexpr uint64_t r_inv_wasm_1 = 0x5ffc3dc;
-    static constexpr uint64_t r_inv_wasm_2 = 0xd6bde42;
-    static constexpr uint64_t r_inv_wasm_3 = 0x1cf152e3;
-    static constexpr uint64_t r_inv_wasm_4 = 0x18eb055f;
-    static constexpr uint64_t r_inv_wasm_5 = 0xed815e2;
-    static constexpr uint64_t r_inv_wasm_6 = 0x16626d2;
-    static constexpr uint64_t r_inv_wasm_7 = 0xb8bab0f;
-    static constexpr uint64_t r_inv_wasm_8 = 0x6d7c4;
 
     // Parameters used for quickly splitting a scalar into two endomorphism scalars for faster scalar multiplication
     // For specifics on how these have been derived, see ecc/fields/endomorphim_scalars.py
