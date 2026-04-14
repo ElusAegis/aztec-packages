@@ -124,10 +124,30 @@ static constexpr uint256_t compute_div_r_inv(const uint256_t& p, unsigned limb_b
     return result;
 }
 
+// Convert a constexpr uint64_t array to a double array (for FMA paths).
+template <size_t N> static constexpr std::array<double, N> to_double_array(const std::array<uint64_t, N>& arr)
+{
+    std::array<double, N> result{};
+    for (size_t i = 0; i < N; ++i) {
+        result[i] = static_cast<double>(arr[i]);
+    }
+    return result;
+}
+
 // Precomputed limb constants for a given limb representation.
 template <unsigned LIMB_BITS, unsigned NUM_LIMBS> struct LimbConstants {
     std::array<uint64_t, NUM_LIMBS> modulus;
     std::array<uint64_t, NUM_LIMBS> div_r_inv;
+
+#ifdef MONTMUL_VARIANT_FMA
+    // The FMA SIMD montmul operates entirely in f64 arithmetic — it needs the
+    // modulus and Yuval div_r_inv (2^{-LIMB_BITS} mod p) as double arrays for
+    // direct use in relaxed-SIMD FMA instructions (f64x2.relaxed_madd).
+    // Only materialized when the FMA variant is active; other paths use the
+    // integer arrays above.
+    std::array<double, NUM_LIMBS> modulus_f;
+    std::array<double, NUM_LIMBS> div_r_inv_f;
+#endif
 };
 
 // Factory: compute LimbConstants from a uint256_t modulus.
@@ -138,16 +158,10 @@ static constexpr LimbConstants<LIMB_BITS, NUM_LIMBS> compute_limb_constants(cons
     result.modulus = split_limbs<LIMB_BITS, NUM_LIMBS>(modulus);
     uint256_t div_r = compute_div_r_inv(modulus, LIMB_BITS);
     result.div_r_inv = split_limbs<LIMB_BITS, NUM_LIMBS>(div_r);
-    return result;
-}
-
-// Convert a constexpr uint64_t array to a double array (for potential FMA paths).
-template <size_t N> static constexpr std::array<double, N> to_double_array(const std::array<uint64_t, N>& arr)
-{
-    std::array<double, N> result{};
-    for (size_t i = 0; i < N; ++i) {
-        result[i] = static_cast<double>(arr[i]);
-    }
+#ifdef MONTMUL_VARIANT_FMA
+    result.modulus_f = to_double_array(result.modulus);
+    result.div_r_inv_f = to_double_array(result.div_r_inv);
+#endif
     return result;
 }
 

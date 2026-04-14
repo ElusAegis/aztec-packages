@@ -93,6 +93,18 @@ template <class base_field, class Params> struct alignas(32) field2 {
     constexpr field2 sqr() const noexcept;
     constexpr void self_sqr() noexcept;
 
+    // Paired multiplication: out1 = a1*b1, out2 = a2*b2.
+    // field2 has no SIMD path, so this is always two sequential multiplications.
+    // Exists so that element_impl.hpp can call Fq::montgomery_mul_paired uniformly.
+    BB_INLINE static constexpr void montgomery_mul_paired(
+        const field2& a1, const field2& b1,
+        const field2& a2, const field2& b2,
+        field2& out1, field2& out2) noexcept
+    {
+        out1 = a1 * b1;
+        out2 = a2 * b2;
+    }
+
     constexpr field2 pow(const uint256_t& exponent) const noexcept;
     constexpr field2 pow(uint64_t exponent) const noexcept;
 

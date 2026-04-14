@@ -28,71 +28,33 @@ namespace bb {
 // clang-format on
 /**
  *
- * Mutiplication
+ * Multiplication — delegates to montgomery_mul which contains all dispatch logic.
  *
  **/
 template <class T> constexpr field<T> field<T>::operator*(const field& other) const noexcept
 {
-    if constexpr (use_generic_arithmetic) {
-        // >= 255-bits or <= 64-bits.
-        return montgomery_mul(other);
-    } else {
-        if (std::is_constant_evaluated()) {
-            return montgomery_mul(other);
-        }
-        field result = asm_mul_with_coarse_reduction(*this, other);
-        result.assert_coarse_form();
-        return result;
-    }
+    return montgomery_mul(other);
 }
 
 template <class T> constexpr field<T>& field<T>::operator*=(const field& other) & noexcept
 {
-    if constexpr (use_generic_arithmetic) {
-        // >= 255-bits or <= 64-bits.
-        *this = operator*(other);
-    } else {
-        if (std::is_constant_evaluated()) {
-            *this = operator*(other);
-        } else {
-            asm_self_mul_with_coarse_reduction(*this, other);
-            assert_coarse_form();
-        }
-    }
+    *this = montgomery_mul(other);
     return *this;
 }
 
 /**
  *
- * Squaring
+ * Squaring — delegates to montgomery_square which contains all dispatch logic.
  *
  **/
 template <class T> constexpr field<T> field<T>::sqr() const noexcept
 {
-    if constexpr (use_generic_arithmetic) {
-        return montgomery_square();
-    } else {
-        if (std::is_constant_evaluated()) {
-            return montgomery_square();
-        }
-        field result = asm_sqr_with_coarse_reduction(*this);
-        result.assert_coarse_form();
-        return result;
-    }
+    return montgomery_square();
 }
 
 template <class T> constexpr void field<T>::self_sqr() & noexcept
 {
-    if constexpr (use_generic_arithmetic) {
-        *this = montgomery_square();
-    } else {
-        if (std::is_constant_evaluated()) {
-            *this = montgomery_square();
-        } else {
-            asm_self_sqr_with_coarse_reduction(*this);
-            assert_coarse_form();
-        }
-    }
+    *this = montgomery_square();
 }
 
 /**

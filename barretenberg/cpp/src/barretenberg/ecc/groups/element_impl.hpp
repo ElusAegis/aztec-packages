@@ -173,18 +173,16 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
         }
     }
 
-    // T0 = z1.z1
+    // T0 = z1^2
     Fq T0 = z.sqr();
 
-    // T1 = x2.t0 - x1 = x2.z1.z1 - x1
-    Fq T1 = other.x * T0;
-    T1 -= x;
-
-    // T2 = T0.z1 = z1.z1.z1
-    // T2 = T2.y2 - y1 = y2.z1.z1.z1 - y1
-    Fq T2 = z * T0;
-    T2 *= other.y;
-    T2 -= y;
+    // Pair 1: T1 = other.x * T0, T2 = z * T0 (both use T0 = z1^2)
+    Fq T1;
+    Fq T2;
+    Fq::montgomery_mul_paired(other.x, T0, z, T0, T1, T2);
+    T1 -= x;           // H = x2*z1^2 - x1
+    T2 *= other.y;     // z1^3 * y2 (sequential — depends on pair 1 output)
+    T2 -= y;            // y2*z1^3 - y1
 
     if (__builtin_expect(T1.is_zero(), 0)) {
         if (T2.is_zero()) {
@@ -214,33 +212,20 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
     T3 += T3;
     T3 += T3;
 
-    // T1 = T1*T3 = 4HHH
-    T1 *= T3;
+    // Pair 2: T1 = T1*T3 (4HHH), T3 = T3*x (4HH*x1)
+    Fq::montgomery_mul_paired(T1, T3, T3, x, T1, T3);
 
-    // T3 = T3 * x1 = 4HH*x1
-    T3 *= x;
+    T0 = T3 + T3;       // 8HH*x1
+    T0 += T1;            // 8HH*x1 + 4HHH
+    x = T2.sqr();        // R^2
+    x -= T0;             // x3 = R^2 - 8HH*x1 - 4HHH
+    T3 -= x;             // 4HH*x1 - x3
 
-    // T0 = 2T3
-    T0 = T3 + T3;
+    // Pair 3: T1 = T1*y (4HHH*y1), T3 = T3*T2 (R*(4HH*x1-x3))
+    Fq::montgomery_mul_paired(T1, y, T3, T2, T1, T3);
 
-    // T0 = T0 + T1 = 2(4HH*x1) + 4HHH
-    T0 += T1;
-    x = T2.sqr();
-
-    // x3 = x3 - T0 = R*R - 8HH*x1 -4HHH
-    x -= T0;
-
-    // T3 = T3 - x3 = 4HH*x1 - x3
-    T3 -= x;
-
-    T1 *= y;
-    T1 += T1;
-
-    // T3 = T2 * T3 = R*(4HH*x1 - x3)
-    T3 *= T2;
-
-    // y3 = T3 - T1
-    y = T3 - T1;
+    T1 += T1;            // 8HHH*y1
+    y = T3 - T1;         // y3 = R*(4HH*x1-x3) - 8HHH*y1
     return *this;
 }
 

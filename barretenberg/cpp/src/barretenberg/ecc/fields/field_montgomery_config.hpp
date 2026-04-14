@@ -9,11 +9,19 @@ inline constexpr unsigned FIELD_BITS = 256;
 // 64 — Native: 64x64->128 widening mul (MUL+UMULH)
 // 29 — WASM int: 29x29=58 bits fits i64 with accumulation headroom
 // 24 — WASM FMA: 24x24=48 bits fits f64 mantissa (53 bits)
+//
+// Exposed as a macro (BB_R_LIMB_BITS) so preprocessor `#if` directives in
+// platform-dispatch code can switch on it. The constexpr below mirrors the
+// macro for use in C++ expressions.
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-inline constexpr unsigned R_LIMB_BITS = 64;
+#define BB_R_LIMB_BITS 64
+#elif defined(MONTMUL_VARIANT_FMA)
+#define BB_R_LIMB_BITS 24
 #else
-inline constexpr unsigned R_LIMB_BITS = 29;
+#define BB_R_LIMB_BITS 29
 #endif
+
+inline constexpr unsigned R_LIMB_BITS = BB_R_LIMB_BITS;
 
 inline constexpr unsigned R_NUM_LIMBS = (FIELD_BITS + R_LIMB_BITS - 1) / R_LIMB_BITS;
 inline constexpr unsigned R_EXPONENT = R_LIMB_BITS * R_NUM_LIMBS;
