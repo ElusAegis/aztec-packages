@@ -282,19 +282,68 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
             return *this;
         }
     }
-    Fq Z1Z1(z.sqr());
-    Fq Z2Z2(other.z.sqr());
-    Fq S2(Z1Z1 * z);
-    Fq U2(Z1Z1 * other.x);
-    S2 *= other.y;
-    Fq U1(Z2Z2 * x);
-    Fq S1(Z2Z2 * other.z);
-    S1 *= y;
+    // Jacobian + Jacobian addition, scheduled as eight paired Montgomery
+    // multiplies (16 logical muls/sqrs, zero single-kernel calls).
+    //
+    // Baseline: sqr (Z1Z1, Z2Z2); mul (S2=Z1Z1·z, U2=Z1Z1·ox, S2·=oy, U1=Z2Z2·x,
+    //   S1=Z2Z2·oz, S1·=y); sqr (I=(2H)²); mul (J=H·I, U1·=I); sqr (x=F²);
+    //   mul (J·=S1); mul (y·=F); sqr ((z+oz)²); mul (z·=H).
+    //
+    // Since sqr(x) = mul(x, x) in the FMA backend, every sqr is a first-class
+    // candidate for either lane of a paired multiply. The schedule below pairs
+    // all 16 ops, exploiting the fact that z and Z1Z1 are dead after Pair 2
+    // (allowing us to fold `z += other.z` and `Z1Z1 += Z2Z2` early), and that
+    // op15 (z² = (z+oz)²) and op9 (I²) can run speculatively because they
+    // never overflow even on the H==0 edge-case path (which is ~never hit for
+    // random MSM inputs).
 
-    Fq F(S2 - S1);
+    // Pair 1: (z², other.z²)
+    Fq Z1Z1;
+    Fq Z2Z2;
+    Fq::montgomery_mul_paired(z, z, other.z, other.z, Z1Z1, Z2Z2);
 
+    // Pair 2: (Z1Z1·z, Z1Z1·other.x)
+    Fq S2;
+    Fq U2;
+    Fq::montgomery_mul_paired(Z1Z1, z, Z1Z1, other.x, S2, U2);
+
+    // Precompute (z + other.z) and (Z1Z1 + Z2Z2) into locals so *this stays
+    // intact if we bail out to self_dbl() / self_set_infinity() on the edge
+    // case below. Both feed the final z-update: z = ((z+oz)² - (Z1Z1+Z2Z2)) · H.
+    Fq z_sum = z + other.z;
+    Fq Z_sum = Z1Z1 + Z2Z2;
+
+    // Pair 3: (S2·other.y, Z2Z2·x)  — S2 output aliases S2 input (safe: paired
+    // kernel reads all inputs to locals before writing any output)
+    Fq U1;
+    Fq::montgomery_mul_paired(S2, other.y, Z2Z2, x, S2, U1);
+
+    // H and 2H are ready as soon as U1 is.
     Fq H(U2 - U1);
+    Fq twoH = H + H;
 
+    // Pair 4: (Z2Z2·other.z, (z+oz)²) — z_sum² is speculative w.r.t. the H==0
+    // edge case but is always numerically safe (never overflows).
+    Fq S1_pre;
+    Fq z_sq;
+    Fq::montgomery_mul_paired(Z2Z2, other.z, z_sum, z_sum, S1_pre, z_sq);
+
+    // z's remaining subtraction before the final mul.
+    Fq z_after_sub = z_sq - Z_sum;
+
+    // Pair 5: (S1·y, (2H)²) — (2H)² is also speculative but safe.
+    Fq S1;
+    Fq I_var;
+    Fq::montgomery_mul_paired(S1_pre, y, twoH, twoH, S1, I_var);
+
+    // F and 2F are ready as soon as S1 is (original code's `F += F`).
+    Fq F(S2 - S1);
+    Fq twoF = F + F;
+
+    // Edge case: H == 0 means the two points share an x-coordinate.
+    // F == 0 ⇒ P == Q (doubling); F != 0 ⇒ P == -Q (infinity).
+    // Pairs 4 and 5 computed (z+oz)² and (2H)² speculatively; that work is
+    // wasted here but H==0 is astronomically rare for random MSM inputs.
     if (__builtin_expect(H.is_zero(), 0)) {
         if (F.is_zero()) {
             self_dbl();
@@ -304,38 +353,31 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
         return *this;
     }
 
-    F += F;
+    // Pair 6: (H·I, U1·I)
+    Fq J;
+    Fq U1_new;
+    Fq::montgomery_mul_paired(H, I_var, U1, I_var, J, U1_new);
 
-    Fq I(H + H);
-    I.self_sqr();
+    // U2 update = 2·U1_new + J (all adds).
+    Fq U2_sum = U1_new + U1_new;
+    U2_sum += J;
 
-    Fq J(H * I);
+    // Pair 7: ((2F)², z_after_sub·H) — final x squaring fused with final z mul.
+    Fq x_F_sq;
+    Fq z_new;
+    Fq::montgomery_mul_paired(twoF, twoF, z_after_sub, H, x_F_sq, z_new);
 
-    U1 *= I;
+    x = x_F_sq - U2_sum;
+    Fq y_pre = U1_new - x;
 
-    U2 = U1 + U1;
-    U2 += J;
+    // Pair 8: (J·S1, y_pre·(2F))
+    Fq J_S1;
+    Fq y_mul;
+    Fq::montgomery_mul_paired(J, S1, y_pre, twoF, J_S1, y_mul);
 
-    x = F.sqr();
-
-    x -= U2;
-
-    J *= S1;
-    J += J;
-
-    y = U1 - x;
-
-    y *= F;
-
-    y -= J;
-
-    z += other.z;
-
-    Z1Z1 += Z2Z2;
-
-    z.self_sqr();
-    z -= Z1Z1;
-    z *= H;
+    Fq J_doubled = J_S1 + J_S1;
+    y = y_mul - J_doubled;
+    z = z_new;
     return *this;
 }
 
