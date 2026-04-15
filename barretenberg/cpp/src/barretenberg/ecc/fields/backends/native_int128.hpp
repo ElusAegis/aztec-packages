@@ -36,6 +36,17 @@ template <class Params> struct NativeBackend {
         out2 = mul(a2, b2);
     }
 
+    // Default paired square: two sequential squares. Only WasmFmaBackend
+    // overrides this with a triangular-product SIMD-paired implementation.
+    BB_INLINE static constexpr void sqr_paired(const field<Params>& a1,
+                                               const field<Params>& a2,
+                                               field<Params>& out1,
+                                               field<Params>& out2) noexcept
+    {
+        out1 = sqr(a1);
+        out2 = sqr(a2);
+    }
+
   private:
     // ── Widening arithmetic helpers (private to this backend) ────────────
 

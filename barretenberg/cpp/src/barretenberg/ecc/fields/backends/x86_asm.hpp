@@ -67,6 +67,15 @@ template <class Params> struct X86AsmBackend {
         out2 = mul(a2, b2);
     }
 
+    BB_INLINE static constexpr void sqr_paired(const field<Params>& a1,
+                                               const field<Params>& a2,
+                                               field<Params>& out1,
+                                               field<Params>& out2) noexcept
+    {
+        out1 = sqr(a1);
+        out2 = sqr(a2);
+    }
+
   private:
     // ── Inline asm montmul (BMI2 ADX when __ADX__, else plain MUL) ───────
 

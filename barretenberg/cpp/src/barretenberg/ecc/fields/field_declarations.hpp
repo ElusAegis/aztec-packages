@@ -538,6 +538,10 @@ template <class Params_> struct alignas(32) field {
     BB_INLINE constexpr field montgomery_square() const noexcept;
     BB_INLINE static constexpr void montgomery_mul_paired(
         const field& a1, const field& b1, const field& a2, const field& b2, field& out1, field& out2) noexcept;
+    BB_INLINE static constexpr void montgomery_sqr_paired(const field& a1,
+                                                          const field& a2,
+                                                          field& out1,
+                                                          field& out2) noexcept;
 
 #if (BBERG_NO_ASM == 0)
     // asm montmul/square now live in backends/x86_asm.hpp (X86AsmBackend).

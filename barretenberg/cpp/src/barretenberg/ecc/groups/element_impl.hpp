@@ -91,20 +91,23 @@ template <class Fq, class Fr, class T> constexpr void element<Fq, Fr, T>::self_d
         }
     }
 
-    // Scheduled as 3 paired Montgomery multiplies + 1 single (vs. 7 singles).
-    // sqr(x) = mul(x, x) in the FMA backend, so each sqr is a valid lane.
+    // Scheduled as 2 paired squarings + 1 paired mul + 1 single (vs. 7 singles).
+    // Pairs 1 and 2 are pure squaring pairs (both lanes compute a²), so they
+    // route to the triangular-product sqr_paired kernel (~41% fewer FMAs per
+    // lane than mul_paired). Pair 3 is mixed (mul + sqr) and stays on
+    // mul_paired — no independent sqr partner available at that point.
 
     // Pair 1: (x², y²) — the two independent input-coordinate squarings.
     Fq T0;
     Fq T1;
-    Fq::montgomery_mul_paired(x, x, y, y, T0, T1);
+    Fq::montgomery_sqr_paired(x, y, T0, T1);
 
     // Pair 2: (T1², (T1 + x)²) — the two downstream squarings both depend on
     // T1 but not on each other.
     Fq T1_plus_x = T1 + x;
     Fq T2;
     Fq T1_sq2;
-    Fq::montgomery_mul_paired(T1, T1, T1_plus_x, T1_plus_x, T2, T1_sq2);
+    Fq::montgomery_sqr_paired(T1, T1_plus_x, T2, T1_sq2);
 
     // T3 = T0 + T2;  T1 = T1_sq2 - T3;  T1 += T1;  // T1 = 4*S
     Fq T3 = T0 + T2;
@@ -176,9 +179,9 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
     Fq T1;
     Fq T2;
     Fq::montgomery_mul_paired(other.x, T0, z, T0, T1, T2);
-    T1 -= x;           // H = x2*z1^2 - x1
-    T2 *= other.y;     // z1^3 * y2 (sequential — depends on pair 1 output)
-    T2 -= y;            // y2*z1^3 - y1
+    T1 -= x;       // H = x2*z1^2 - x1
+    T2 *= other.y; // z1^3 * y2 (sequential — depends on pair 1 output)
+    T2 -= y;       // y2*z1^3 - y1
 
     if (__builtin_expect(T1.is_zero(), 0)) {
         if (T2.is_zero()) {
@@ -211,17 +214,17 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
     // Pair 2: T1 = T1*T3 (4HHH), T3 = T3*x (4HH*x1)
     Fq::montgomery_mul_paired(T1, T3, T3, x, T1, T3);
 
-    T0 = T3 + T3;       // 8HH*x1
-    T0 += T1;            // 8HH*x1 + 4HHH
-    x = T2.sqr();        // R^2
-    x -= T0;             // x3 = R^2 - 8HH*x1 - 4HHH
-    T3 -= x;             // 4HH*x1 - x3
+    T0 = T3 + T3; // 8HH*x1
+    T0 += T1;     // 8HH*x1 + 4HHH
+    x = T2.sqr(); // R^2
+    x -= T0;      // x3 = R^2 - 8HH*x1 - 4HHH
+    T3 -= x;      // 4HH*x1 - x3
 
     // Pair 3: T1 = T1*y (4HHH*y1), T3 = T3*T2 (R*(4HH*x1-x3))
     Fq::montgomery_mul_paired(T1, y, T3, T2, T1, T3);
 
-    T1 += T1;            // 8HHH*y1
-    y = T3 - T1;         // y3 = R*(4HH*x1-x3) - 8HHH*y1
+    T1 += T1;    // 8HHH*y1
+    y = T3 - T1; // y3 = R*(4HH*x1-x3) - 8HHH*y1
     return *this;
 }
 
@@ -279,24 +282,29 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
         }
     }
     // Jacobian + Jacobian addition, scheduled as eight paired Montgomery
-    // multiplies (16 logical muls/sqrs, zero single-kernel calls).
+    // kernel calls (16 logical muls/sqrs, zero single-kernel calls).
     //
     // Baseline: sqr (Z1Z1, Z2Z2); mul (S2=Z1Z1·z, U2=Z1Z1·ox, S2·=oy, U1=Z2Z2·x,
     //   S1=Z2Z2·oz, S1·=y); sqr (I=(2H)²); mul (J=H·I, U1·=I); sqr (x=F²);
     //   mul (J·=S1); mul (y·=F); sqr ((z+oz)²); mul (z·=H).
     //
-    // Since sqr(x) = mul(x, x) in the FMA backend, every sqr is a first-class
-    // candidate for either lane of a paired multiply. The schedule below pairs
-    // all 16 ops, exploiting the fact that z and Z1Z1 are dead after Pair 2
-    // (allowing us to fold `z += other.z` and `Z1Z1 += Z2Z2` early), and that
-    // op15 (z² = (z+oz)²) and op9 (I²) can run speculatively because they
-    // never overflow even on the H==0 edge-case path (which is ~never hit for
-    // random MSM inputs).
+    // The schedule below pairs all 16 ops across 8 paired kernel invocations.
+    // Pair 1 is a pure-square pair and routes to sqr_paired (triangular kernel,
+    // ~41% cheaper than mul). Pairs 4, 5, 7 mix one mul with one sqr; since no
+    // two independent sqrs are simultaneously available without breaking the
+    // mul dependency chain, those stay on mul_paired (the sqr lane benefits
+    // transparently via WasmFmaBackend's internal sqr(x)=mul(x,x) routing).
+    //
+    // Data-flow exploits: z and Z1Z1 are dead after Pair 2 (allowing us to fold
+    // `z += other.z` and `Z1Z1 += Z2Z2` early), and op15 (z² = (z+oz)²) and
+    // op9 (I²) can run speculatively because they never overflow even on the
+    // H==0 edge-case path (which is ~never hit for random MSM inputs).
 
-    // Pair 1: (z², other.z²)
+    // Pair 1: (z², other.z²) — pure squaring pair, routes to sqr_paired
+    // (triangular-product kernel; ~41% fewer FMAs per lane than mul_paired).
     Fq Z1Z1;
     Fq Z2Z2;
-    Fq::montgomery_mul_paired(z, z, other.z, other.z, Z1Z1, Z2Z2);
+    Fq::montgomery_sqr_paired(z, other.z, Z1Z1, Z2Z2);
 
     // Pair 2: (Z1Z1·z, Z1Z1·other.x)
     Fq S2;

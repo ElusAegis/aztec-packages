@@ -261,6 +261,20 @@ constexpr void field<T>::montgomery_mul_paired(
     detail::MontBackend<T>::mul_paired(a1, b1, a2, b2, out1, out2);
 }
 
+template <class T>
+constexpr void field<T>::montgomery_sqr_paired(const field& a1, const field& a2, field& out1, field& out2) noexcept
+{
+    if constexpr (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
+        // Large-modulus path: the small-modulus sqr_paired assumes the
+        // backend's regular mul/sqr is safe, which isn't true for big moduli.
+        // Route to mul_big(x, x) twice, analogous to montgomery_mul_paired.
+        out1 = detail::MontBackend<T>::mul_big(a1, a1);
+        out2 = detail::MontBackend<T>::mul_big(a2, a2);
+        return;
+    }
+    detail::MontBackend<T>::sqr_paired(a1, a2, out1, out2);
+}
+
 template <class T> constexpr field<T> field<T>::montgomery_mul_big(const field& other) const noexcept
 {
     static_assert(modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD);

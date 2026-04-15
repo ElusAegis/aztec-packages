@@ -39,6 +39,16 @@ template <class Params> struct WasmInt29Backend {
         out2 = mul(a2, b2);
     }
 
+    // Default paired square: two sequential sqr() calls.
+    BB_INLINE static constexpr void sqr_paired(const field<Params>& a1,
+                                               const field<Params>& a2,
+                                               field<Params>& out1,
+                                               field<Params>& out2) noexcept
+    {
+        out1 = sqr(a1);
+        out2 = sqr(a2);
+    }
+
     // Exposed for FMA backend (which reuses wide_mul's 29-bit splitting).
     BB_INLINE static constexpr std::array<uint64_t, 9> wasm_convert(const uint64_t* data)
     {
