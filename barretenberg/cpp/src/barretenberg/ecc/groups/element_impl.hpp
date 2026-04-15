@@ -672,13 +672,23 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
 {
     Fq batch_inversion_accumulator = Fq::one();
 
-    // Forward pass: accumulate (x2 - x1) products for batch inversion
+    // Forward pass: accumulate (x2 - x1) products for batch inversion.
+    // The two multiplications below both read the *current* value of
+    // batch_inversion_accumulator, so they are independent and can be fused
+    // into a single paired Montgomery multiply (2 SIMD lanes per kernel call).
     for (size_t i = 0; i < num_points; i += 2) {
         scratch_space[i >> 1] = points[i].x + points[i + 1].x; // x1 + x2 (saved for later)
         points[i + 1].x -= points[i].x;                        // x2 - x1
         points[i + 1].y -= points[i].y;                        // y2 - y1
-        points[i + 1].y *= batch_inversion_accumulator;
-        batch_inversion_accumulator *= points[i + 1].x;
+        // Pair: points[i+1].y = points[i+1].y * acc;  acc = acc * points[i+1].x
+        // (Both use the old acc; output aliasing is safe — the paired kernel
+        //  reads all inputs into locals before writing any output.)
+        Fq::montgomery_mul_paired(points[i + 1].y,
+                                  batch_inversion_accumulator,
+                                  batch_inversion_accumulator,
+                                  points[i + 1].x,
+                                  points[i + 1].y,
+                                  batch_inversion_accumulator);
     }
 
     if (batch_inversion_accumulator == Fq::zero()) {
@@ -686,11 +696,18 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
     }
     batch_inversion_accumulator = batch_inversion_accumulator.invert();
 
-    // Backward pass: complete inversions and compute additions
+    // Backward pass: complete inversions and compute additions.
+    // Same pairing opportunity as the forward pass on the initial two muls.
+    // The subsequent sqr and final mul depend on the paired output, so they
+    // stay sequential in this simple version.
     for (size_t i = num_points - 2; i < num_points; i -= 2) {
-        // lambda = (y2 - y1) / (x2 - x1)
-        points[i + 1].y *= batch_inversion_accumulator;
-        batch_inversion_accumulator *= points[i + 1].x;
+        // Pair: lambda = (y2 - y1) * acc;  acc = acc * (x2 - x1)
+        Fq::montgomery_mul_paired(points[i + 1].y,
+                                  batch_inversion_accumulator,
+                                  batch_inversion_accumulator,
+                                  points[i + 1].x,
+                                  points[i + 1].y,
+                                  batch_inversion_accumulator);
         points[i + 1].x = points[i + 1].y.sqr();
         // x3 = lambda^2 - (x1 + x2)
         points[(i + num_points) >> 1].x = points[i + 1].x - scratch_space[i >> 1];
