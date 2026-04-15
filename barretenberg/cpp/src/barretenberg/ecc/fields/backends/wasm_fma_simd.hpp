@@ -45,7 +45,7 @@ template <class Params> struct WasmFmaBackend {
         if (std::is_constant_evaluated()) {
             return ConstexprFallback::mul(lhs, rhs);
         }
-        return mul_fma_simd(lhs, rhs);
+        return mul_via_paired_fma_simd(lhs, rhs);
     }
 
     BB_INLINE static constexpr field<Params> sqr(const field<Params>& x) noexcept
@@ -96,6 +96,15 @@ template <class Params> struct WasmFmaBackend {
                                     const field<Params>& b2,
                                     field<Params>& out1,
                                     field<Params>& out2) noexcept;
+
+    BB_INLINE static field<Params> mul_via_paired_fma_simd(const field<Params>& lhs,
+                                                           const field<Params>& rhs) noexcept
+    {
+        field<Params> out1;
+        field<Params> out2;
+        mul_paired_fma_simd(lhs, rhs, lhs, rhs, out1, out2);
+        return out1;
+    }
 };
 
 // ═════════════════════════════════════════════════════════════════════════
