@@ -91,61 +91,57 @@ template <class Fq, class Fr, class T> constexpr void element<Fq, Fr, T>::self_d
         }
     }
 
-    // T0 = x*x
-    Fq T0 = x.sqr();
+    // Scheduled as 3 paired Montgomery multiplies + 1 single (vs. 7 singles).
+    // sqr(x) = mul(x, x) in the FMA backend, so each sqr is a valid lane.
 
-    // T1 = y*y
-    Fq T1 = y.sqr();
+    // Pair 1: (x², y²) — the two independent input-coordinate squarings.
+    Fq T0;
+    Fq T1;
+    Fq::montgomery_mul_paired(x, x, y, y, T0, T1);
 
-    // T2 = T1*T1 = y*y*y*y
-    Fq T2 = T1.sqr();
+    // Pair 2: (T1², (T1 + x)²) — the two downstream squarings both depend on
+    // T1 but not on each other.
+    Fq T1_plus_x = T1 + x;
+    Fq T2;
+    Fq T1_sq2;
+    Fq::montgomery_mul_paired(T1, T1, T1_plus_x, T1_plus_x, T2, T1_sq2);
 
-    // T1 = T1 + x = x + y*y
-    T1 += x;
-
-    // T1 = T1 * T1
-    T1.self_sqr();
-
-    // T3 = T0 + T2 = xx + y*y*y*y
+    // T3 = T0 + T2;  T1 = T1_sq2 - T3;  T1 += T1;  // T1 = 4*S
     Fq T3 = T0 + T2;
-
-    // T1 = T1 - T3 = x*x + y*y*y*y + 2*x*x*y*y*y*y - x*x - y*y*y*y = 2*x*x*y*y*y*y = 2*S
-    T1 -= T3;
-
-    // T1 = 2T1 = 4*S
+    T1 = T1_sq2 - T3;
     T1 += T1;
 
-    // T3 = 3T0
+    // T3 = 3*T0
     T3 = T0 + T0;
     T3 += T0;
     if constexpr (T::has_a) {
+        // Not on the BN254/Grumpkin MSM hot path (has_a is false there).
+        // Kept sequential; dedicated pairing is future work if needed.
         T3 += (T::a * z.sqr().sqr());
     }
 
-    // z2 = 2*y*z
-    z += z;
-    z *= y;
+    // Pair 3: (z_doubled · y, T3²) — the final mul and sqr are independent
+    // once T3 (= 3*T0 [+ a*z⁴]) is known.
+    Fq z_doubled = z + z;
+    Fq new_z;
+    Fq x_new;
+    Fq::montgomery_mul_paired(z_doubled, y, T3, T3, new_z, x_new);
 
-    // T0 = 2T1
-    T0 = T1 + T1;
+    // x = x_new - 2*T1
+    Fq twoT1 = T1 + T1;
+    x = x_new - twoT1;
 
-    // x2 = T3*T3
-    x = T3.sqr();
-
-    // x2 = x2 - 2T1
-    x -= T0;
-
-    // T2 = 8T2
+    // T2 = 8*T2
     T2 += T2;
     T2 += T2;
     T2 += T2;
 
-    // y2 = T1 - x2
-    y = T1 - x;
-
-    // y2 = y2 * T3 - T2
-    y *= T3;
+    // y = (T1 - x) * T3 - T2 — last mul stays single (nothing left to pair).
+    Fq y_pre = T1 - x;
+    y = y_pre * T3;
     y -= T2;
+
+    z = new_z;
 }
 
 template <class Fq, class Fr, class T> constexpr element<Fq, Fr, T> element<Fq, Fr, T>::dbl() const noexcept
