@@ -8,9 +8,11 @@
 
 /**
  * @brief Include order of header-only field class is structured to ensure linter/language server can resolve paths.
- *        Declarations are defined in "field_declarations.hpp", definitions in "field_impl.hpp" (which includes
- *        declarations header) Specialized definitions are in "field_impl_generic.hpp" and
- *        "platform_variants/x86_asm.hpp" (which include "field_impl.hpp")
+ *        Declarations are defined in "field_declarations.hpp"; operators and shared
+ *        helpers in "field_impl.hpp"; constexpr addc/sbb/add/sub/reduce and Montgomery
+ *        dispatch in "field_impl_generic.hpp" (which includes backends/mont_backend.hpp
+ *        for platform-specific Montgomery multiplication); x86 inline-asm add/sub/reduce/
+ *        negate in "x86_asm_arith.hpp".
  */
 #include "./field_impl_generic.hpp"
-#include "./platform_variants/x86_asm.hpp"
+#include "./x86_asm_arith.hpp"

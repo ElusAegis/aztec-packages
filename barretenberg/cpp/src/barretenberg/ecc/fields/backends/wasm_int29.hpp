@@ -1,110 +1,146 @@
 #pragma once
 
-// WASM integer compute paradigm: 29-bit limb helpers, schoolbook montmul, big-modulus montmul, wide multiply.
-// Included from field_impl_generic.hpp (already inside namespace bb, after addc/sbb are defined).
+// WASM 29-bit integer Montgomery backend.
+//
+// Provides:
+//   - 9×29-bit schoolbook montmul (small modulus, R = 2^261)
+//   - 9×29-bit schoolbook montsqr
+//   - big-modulus montmul with interleaved reduction
+//   - raw 256×256 → 512 wide multiply (R-independent, also usable from FMA)
+//
+// Active on WASM and any host without __int128.
+// Schoolbook paths are fully constexpr (pure integer arithmetic).
 
 #if defined(__wasm__) || !defined(__SIZEOF_INT128__)
 
-// ── Shared WASM helpers (available to all WASM builds, including FMA) ─
+#include "../field_declarations.hpp"
+#include "../field_montgomery_config.hpp"
 
-template <class T>
-constexpr void field<T>::wasm_madd(uint64_t& left_limb,
-                                   const std::array<uint64_t, 9>& right_limbs,
-                                   uint64_t& result_0,
-                                   uint64_t& result_1,
-                                   uint64_t& result_2,
-                                   uint64_t& result_3,
-                                   uint64_t& result_4,
-                                   uint64_t& result_5,
-                                   uint64_t& result_6,
-                                   uint64_t& result_7,
-                                   uint64_t& result_8)
-{
-    result_0 += left_limb * right_limbs[0];
-    result_1 += left_limb * right_limbs[1];
-    result_2 += left_limb * right_limbs[2];
-    result_3 += left_limb * right_limbs[3];
-    result_4 += left_limb * right_limbs[4];
-    result_5 += left_limb * right_limbs[5];
-    result_6 += left_limb * right_limbs[6];
-    result_7 += left_limb * right_limbs[7];
-    result_8 += left_limb * right_limbs[8];
-}
+namespace bb::detail {
 
-template <class T> constexpr std::array<uint64_t, 9> field<T>::wasm_convert(const uint64_t* data)
-{
-    return { data[0] & 0x1fffffff,
-             (data[0] >> 29) & 0x1fffffff,
-             ((data[0] >> 58) & 0x3f) | ((data[1] & 0x7fffff) << 6),
-             (data[1] >> 23) & 0x1fffffff,
-             ((data[1] >> 52) & 0xfff) | ((data[2] & 0x1ffff) << 12),
-             (data[2] >> 17) & 0x1fffffff,
-             ((data[2] >> 46) & 0x3ffff) | ((data[3] & 0x7ff) << 18),
-             (data[3] >> 11) & 0x1fffffff,
-             (data[3] >> 40) & 0x1fffffff };
-}
+template <class Params> struct WasmInt29Backend {
+    // ── Public MontBackend contract ──────────────────────────────────────
 
-// ── 29-bit Montgomery reduction helpers (R_LIMB_BITS == 29 only) ─────
+    BB_INLINE static constexpr field<Params> mul(const field<Params>& lhs, const field<Params>& rhs) noexcept;
+    BB_INLINE static constexpr field<Params> sqr(const field<Params>& x) noexcept;
+    BB_INLINE static constexpr field<Params> mul_big(const field<Params>& lhs, const field<Params>& rhs) noexcept;
+    BB_INLINE static constexpr typename field<Params>::wide_array wide_mul(const field<Params>& lhs,
+                                                                           const field<Params>& rhs) noexcept;
+
+    // Default paired multiply: two sequential mul() calls.
+    BB_INLINE static constexpr void mul_paired(const field<Params>& a1,
+                                               const field<Params>& b1,
+                                               const field<Params>& a2,
+                                               const field<Params>& b2,
+                                               field<Params>& out1,
+                                               field<Params>& out2) noexcept
+    {
+        out1 = mul(a1, b1);
+        out2 = mul(a2, b2);
+    }
+
+    // Exposed for FMA backend (which reuses wide_mul's 29-bit splitting).
+    BB_INLINE static constexpr std::array<uint64_t, 9> wasm_convert(const uint64_t* data)
+    {
+        return { data[0] & 0x1fffffff,
+                 (data[0] >> 29) & 0x1fffffff,
+                 ((data[0] >> 58) & 0x3f) | ((data[1] & 0x7fffff) << 6),
+                 (data[1] >> 23) & 0x1fffffff,
+                 ((data[1] >> 52) & 0xfff) | ((data[2] & 0x1ffff) << 12),
+                 (data[2] >> 17) & 0x1fffffff,
+                 ((data[2] >> 46) & 0x3ffff) | ((data[3] & 0x7ff) << 18),
+                 (data[3] >> 11) & 0x1fffffff,
+                 (data[3] >> 40) & 0x1fffffff };
+    }
+
+  private:
+    // ── 29-bit limb helpers ──────────────────────────────────────────────
+
+    BB_INLINE static constexpr void wasm_madd(uint64_t& left_limb,
+                                              const std::array<uint64_t, 9>& right_limbs,
+                                              uint64_t& result_0,
+                                              uint64_t& result_1,
+                                              uint64_t& result_2,
+                                              uint64_t& result_3,
+                                              uint64_t& result_4,
+                                              uint64_t& result_5,
+                                              uint64_t& result_6,
+                                              uint64_t& result_7,
+                                              uint64_t& result_8)
+    {
+        result_0 += left_limb * right_limbs[0];
+        result_1 += left_limb * right_limbs[1];
+        result_2 += left_limb * right_limbs[2];
+        result_3 += left_limb * right_limbs[3];
+        result_4 += left_limb * right_limbs[4];
+        result_5 += left_limb * right_limbs[5];
+        result_6 += left_limb * right_limbs[6];
+        result_7 += left_limb * right_limbs[7];
+        result_8 += left_limb * right_limbs[8];
+    }
+
+#if BB_R_LIMB_BITS == 29
+    BB_INLINE static constexpr void wasm_reduce(uint64_t& result_0,
+                                                uint64_t& result_1,
+                                                uint64_t& result_2,
+                                                uint64_t& result_3,
+                                                uint64_t& result_4,
+                                                uint64_t& result_5,
+                                                uint64_t& result_6,
+                                                uint64_t& result_7,
+                                                uint64_t& result_8)
+    {
+        constexpr uint64_t mask = 0x1fffffff;
+        constexpr uint64_t r_inv = Params::r_inv & mask;
+        constexpr auto r_limbs = field<Params>::r_limbs;
+        uint64_t k = (result_0 * r_inv) & mask;
+        result_0 += k * r_limbs.modulus[0];
+        result_1 += k * r_limbs.modulus[1] + (result_0 >> R_LIMB_BITS);
+        result_2 += k * r_limbs.modulus[2];
+        result_3 += k * r_limbs.modulus[3];
+        result_4 += k * r_limbs.modulus[4];
+        result_5 += k * r_limbs.modulus[5];
+        result_6 += k * r_limbs.modulus[6];
+        result_7 += k * r_limbs.modulus[7];
+        result_8 += k * r_limbs.modulus[8];
+    }
+
+    BB_INLINE static constexpr void wasm_reduce_yuval(uint64_t& result_0,
+                                                      uint64_t& result_1,
+                                                      uint64_t& result_2,
+                                                      uint64_t& result_3,
+                                                      uint64_t& result_4,
+                                                      uint64_t& result_5,
+                                                      uint64_t& result_6,
+                                                      uint64_t& result_7,
+                                                      uint64_t& result_8,
+                                                      uint64_t& result_9)
+    {
+        constexpr uint64_t mask = 0x1fffffff;
+        constexpr auto r_limbs = field<Params>::r_limbs;
+        const uint64_t result_0_masked = result_0 & mask;
+        result_1 += result_0_masked * r_limbs.div_r_inv[0] + (result_0 >> R_LIMB_BITS);
+        result_2 += result_0_masked * r_limbs.div_r_inv[1];
+        result_3 += result_0_masked * r_limbs.div_r_inv[2];
+        result_4 += result_0_masked * r_limbs.div_r_inv[3];
+        result_5 += result_0_masked * r_limbs.div_r_inv[4];
+        result_6 += result_0_masked * r_limbs.div_r_inv[5];
+        result_7 += result_0_masked * r_limbs.div_r_inv[6];
+        result_8 += result_0_masked * r_limbs.div_r_inv[7];
+        result_9 += result_0_masked * r_limbs.div_r_inv[8];
+    }
+#endif // BB_R_LIMB_BITS == 29
+};
+
+// ── Schoolbook Montgomery multiplication (9×29-bit) ──────────────────────
 
 #if BB_R_LIMB_BITS == 29
 
-template <class T>
-constexpr void field<T>::wasm_reduce(uint64_t& result_0,
-                                     uint64_t& result_1,
-                                     uint64_t& result_2,
-                                     uint64_t& result_3,
-                                     uint64_t& result_4,
-                                     uint64_t& result_5,
-                                     uint64_t& result_6,
-                                     uint64_t& result_7,
-                                     uint64_t& result_8)
+template <class Params>
+constexpr field<Params> WasmInt29Backend<Params>::mul(const field<Params>& lhs, const field<Params>& rhs) noexcept
 {
-    constexpr uint64_t mask = 0x1fffffff;
-    constexpr uint64_t r_inv = T::r_inv & mask;
-    uint64_t k = (result_0 * r_inv) & mask;
-    result_0 += k * r_limbs.modulus[0];
-    result_1 += k * r_limbs.modulus[1] + (result_0 >> R_LIMB_BITS);
-    result_2 += k * r_limbs.modulus[2];
-    result_3 += k * r_limbs.modulus[3];
-    result_4 += k * r_limbs.modulus[4];
-    result_5 += k * r_limbs.modulus[5];
-    result_6 += k * r_limbs.modulus[6];
-    result_7 += k * r_limbs.modulus[7];
-    result_8 += k * r_limbs.modulus[8];
-}
-
-template <class T>
-constexpr void field<T>::wasm_reduce_yuval(uint64_t& result_0,
-                                            uint64_t& result_1,
-                                            uint64_t& result_2,
-                                            uint64_t& result_3,
-                                            uint64_t& result_4,
-                                            uint64_t& result_5,
-                                            uint64_t& result_6,
-                                            uint64_t& result_7,
-                                            uint64_t& result_8,
-                                            uint64_t& result_9)
-{
-    constexpr uint64_t mask = 0x1fffffff;
-    const uint64_t result_0_masked = result_0 & mask;
-    result_1 += result_0_masked * r_limbs.div_r_inv[0] + (result_0 >> R_LIMB_BITS);
-    result_2 += result_0_masked * r_limbs.div_r_inv[1];
-    result_3 += result_0_masked * r_limbs.div_r_inv[2];
-    result_4 += result_0_masked * r_limbs.div_r_inv[3];
-    result_5 += result_0_masked * r_limbs.div_r_inv[4];
-    result_6 += result_0_masked * r_limbs.div_r_inv[5];
-    result_7 += result_0_masked * r_limbs.div_r_inv[6];
-    result_8 += result_0_masked * r_limbs.div_r_inv[7];
-    result_9 += result_0_masked * r_limbs.div_r_inv[8];
-}
-
-// ── Schoolbook Montgomery multiplication (9×29-bit) ──────────────────
-
-template <class T>
-constexpr field<T> field<T>::montgomery_mul_wasm_standard(const field& other) const noexcept
-{
-    auto left = wasm_convert(data);
-    auto right = wasm_convert(other.data);
+    auto left = wasm_convert(lhs.data);
+    auto right = wasm_convert(rhs.data);
     constexpr uint64_t mask = 0x1fffffff;
     uint64_t temp_0 = 0;
     uint64_t temp_1 = 0;
@@ -166,12 +202,11 @@ constexpr field<T> field<T>::montgomery_mul_wasm_standard(const field& other) co
              (temp_15 >> 18) | (temp_16 << 11) };
 }
 
-// ── Schoolbook Montgomery squaring (9×29-bit) ────────────────────────
+// ── Schoolbook Montgomery squaring (9×29-bit) ────────────────────────────
 
-template <class T>
-constexpr field<T> field<T>::montgomery_square_wasm_standard() const noexcept
+template <class Params> constexpr field<Params> WasmInt29Backend<Params>::sqr(const field<Params>& x) noexcept
 {
-    auto left = wasm_convert(data);
+    auto left = wasm_convert(x.data);
     constexpr uint64_t mask = 0x1fffffff;
     uint64_t temp_0 = 0;
     uint64_t temp_1 = 0;
@@ -300,15 +335,16 @@ constexpr field<T> field<T>::montgomery_square_wasm_standard() const noexcept
              (temp_15 >> 18) | (temp_16 << 11) };
 }
 
-// ── Big-modulus Montgomery multiplication (>= 2^254), WASM 29-bit ────
+// ── Big-modulus Montgomery multiplication (>= 2^254), WASM 29-bit ────────
 
-template <class T>
-constexpr field<T> field<T>::montgomery_mul_big_wasm29(const field& other) const noexcept
+template <class Params>
+constexpr field<Params> WasmInt29Backend<Params>::mul_big(const field<Params>& lhs, const field<Params>& rhs) noexcept
 {
-    static_assert(modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD);
+    static_assert(field<Params>::modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD);
+    constexpr auto r_limbs = field<Params>::r_limbs;
 
-    auto left = wasm_convert(data);
-    auto right = wasm_convert(other.data);
+    auto left = wasm_convert(lhs.data);
+    auto right = wasm_convert(rhs.data);
     constexpr uint64_t mask = 0x1fffffff;
     uint64_t temp_0 = 0;
     uint64_t temp_1 = 0;
@@ -403,17 +439,47 @@ constexpr field<T> field<T>::montgomery_mul_big_wasm29(const field& other) const
              (temp_15 >> 18) | (temp_16 << 11) | (temp_17 << 40) };
 }
 
+#else // BB_R_LIMB_BITS != 29 — stub mul/sqr/mul_big so the non-29 build doesn't need them
+
+template <class Params>
+constexpr field<Params> WasmInt29Backend<Params>::mul(const field<Params>&, const field<Params>&) noexcept
+{
+    // Not reachable — WasmInt29Backend is only selected when BB_R_LIMB_BITS == 29.
+    if (!std::is_constant_evaluated()) {
+        __builtin_trap();
+    }
+    return field<Params>{};
+}
+
+template <class Params> constexpr field<Params> WasmInt29Backend<Params>::sqr(const field<Params>&) noexcept
+{
+    if (!std::is_constant_evaluated()) {
+        __builtin_trap();
+    }
+    return field<Params>{};
+}
+
+template <class Params>
+constexpr field<Params> WasmInt29Backend<Params>::mul_big(const field<Params>&, const field<Params>&) noexcept
+{
+    if (!std::is_constant_evaluated()) {
+        __builtin_trap();
+    }
+    return field<Params>{};
+}
+
 #endif // BB_R_LIMB_BITS == 29
 
-// ── 256×256→512 wide multiply, WASM path (uses 29-bit internally) ────
-// Available to ALL WASM builds (including FMA): mul_512 is a raw wide
-// multiply, independent of the Montgomery R representation.
+// ── 256×256 → 512 wide multiply, WASM path (uses 29-bit internally) ──────
+// R-independent: pure integer wide multiply. Safe to call from any WASM
+// build, including FMA (where R_LIMB_BITS == 24).
 
-template <class T>
-constexpr struct field<T>::wide_array field<T>::mul_512_wasm(const field& other) const noexcept
+template <class Params>
+constexpr typename field<Params>::wide_array WasmInt29Backend<Params>::wide_mul(const field<Params>& lhs,
+                                                                                const field<Params>& rhs) noexcept
 {
-    auto left = wasm_convert(data);
-    auto right = wasm_convert(other.data);
+    auto left = wasm_convert(lhs.data);
+    auto right = wasm_convert(rhs.data);
     constexpr uint64_t mask = 0x1fffffff;
     uint64_t temp_0 = 0;
     uint64_t temp_1 = 0;
@@ -485,5 +551,7 @@ constexpr struct field<T>::wide_array field<T>::mul_512_wasm(const field& other)
              (temp_13 >> 7) | (temp_14 << 22) | (temp_15 << 51),
              (temp_15 >> 13) | (temp_16 << 16) };
 }
+
+} // namespace bb::detail
 
 #endif // defined(__wasm__) || !defined(__SIZEOF_INT128__)

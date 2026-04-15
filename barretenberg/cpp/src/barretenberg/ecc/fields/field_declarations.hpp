@@ -238,15 +238,16 @@ template <class Params_> struct alignas(32) field {
 
     // Use generic (non-asm) arithmetic: no BMI2 asm, large modulus (>= 2^254), or tiny modulus (<= 64 bits).
     static constexpr bool use_generic_arithmetic =
-        BBERG_NO_ASM ||
-        (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+        BBERG_NO_ASM || (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
         (modulus.data[1] == 0 && modulus.data[2] == 0 && modulus.data[3] == 0);
 
     static constexpr field cube_root_of_unity()
     {
         if constexpr (Params::cube_root_mont != uint256_t(0)) {
-            constexpr field result{ Params::cube_root_mont.data[0], Params::cube_root_mont.data[1],
-                                    Params::cube_root_mont.data[2], Params::cube_root_mont.data[3] };
+            constexpr field result{ Params::cube_root_mont.data[0],
+                                    Params::cube_root_mont.data[1],
+                                    Params::cube_root_mont.data[2],
+                                    Params::cube_root_mont.data[3] };
             return result;
         } else {
             constexpr field two_inv = field(2).invert();
@@ -262,8 +263,10 @@ template <class Params_> struct alignas(32) field {
 
     static constexpr field coset_generator()
     {
-        const field result{ Params::coset_generator_mont.data[0], Params::coset_generator_mont.data[1],
-                            Params::coset_generator_mont.data[2], Params::coset_generator_mont.data[3] };
+        const field result{ Params::coset_generator_mont.data[0],
+                            Params::coset_generator_mont.data[1],
+                            Params::coset_generator_mont.data[2],
+                            Params::coset_generator_mont.data[3] };
         return result;
     }
 
@@ -511,60 +514,6 @@ template <class Params_> struct alignas(32) field {
     BB_INLINE static constexpr uint64_t addc(uint64_t a, uint64_t b, uint64_t carry_in, uint64_t& carry_out) noexcept;
     BB_INLINE static constexpr uint64_t sbb(uint64_t a, uint64_t b, uint64_t borrow_in, uint64_t& borrow_out) noexcept;
 
-    // ── Native __int128 paradigm (defined in platform_variants/native_int128.hpp) ──
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    BB_INLINE static constexpr std::pair<uint64_t, uint64_t> mul_wide(uint64_t a, uint64_t b) noexcept;
-    BB_INLINE static constexpr uint64_t mac(
-        uint64_t a, uint64_t b, uint64_t c, uint64_t carry_in, uint64_t& carry_out) noexcept;
-    BB_INLINE static constexpr void mac(
-        uint64_t a, uint64_t b, uint64_t c, uint64_t carry_in, uint64_t& out, uint64_t& carry_out) noexcept;
-    BB_INLINE static constexpr uint64_t mac_mini(uint64_t a, uint64_t b, uint64_t c, uint64_t& out) noexcept;
-    BB_INLINE static constexpr void mac_mini(
-        uint64_t a, uint64_t b, uint64_t c, uint64_t& out, uint64_t& carry_out) noexcept;
-    BB_INLINE static constexpr uint64_t mac_discard_lo(uint64_t a, uint64_t b, uint64_t c) noexcept;
-    BB_INLINE static constexpr uint64_t square_accumulate(uint64_t a, uint64_t b, uint64_t c,
-                                                          uint64_t carry_in_lo, uint64_t carry_in_hi,
-                                                          uint64_t& carry_lo, uint64_t& carry_hi) noexcept;
-    BB_INLINE constexpr field montgomery_mul_native_cios(const field& other) const noexcept;
-    BB_INLINE constexpr field montgomery_square_native_cios() const noexcept;
-    BB_INLINE constexpr field montgomery_mul_big_native(const field& other) const noexcept;
-    BB_INLINE constexpr wide_array mul_512_native(const field& other) const noexcept;
-#endif
-
-    // ── WASM integer paradigm (defined in platform_variants/wasm_int29.hpp) ──
-#if defined(__wasm__) || !defined(__SIZEOF_INT128__)
-    BB_INLINE static constexpr void wasm_madd(uint64_t& left_limb,
-                                              const std::array<uint64_t, 9>& right_limbs,
-                                              uint64_t& result_0, uint64_t& result_1, uint64_t& result_2,
-                                              uint64_t& result_3, uint64_t& result_4, uint64_t& result_5,
-                                              uint64_t& result_6, uint64_t& result_7, uint64_t& result_8);
-    BB_INLINE static constexpr std::array<uint64_t, 9> wasm_convert(const uint64_t* data);
-    BB_INLINE constexpr wide_array mul_512_wasm(const field& other) const noexcept;
-#if BB_R_LIMB_BITS == 29
-    BB_INLINE static constexpr void wasm_reduce(uint64_t& result_0, uint64_t& result_1, uint64_t& result_2,
-                                                uint64_t& result_3, uint64_t& result_4, uint64_t& result_5,
-                                                uint64_t& result_6, uint64_t& result_7, uint64_t& result_8);
-    BB_INLINE static constexpr void wasm_reduce_yuval(uint64_t& result_0, uint64_t& result_1, uint64_t& result_2,
-                                                      uint64_t& result_3, uint64_t& result_4, uint64_t& result_5,
-                                                      uint64_t& result_6, uint64_t& result_7, uint64_t& result_8,
-                                                      uint64_t& result_9);
-    BB_INLINE constexpr field montgomery_mul_wasm_standard(const field& other) const noexcept;
-    BB_INLINE constexpr field montgomery_square_wasm_standard() const noexcept;
-    BB_INLINE constexpr field montgomery_mul_big_wasm29(const field& other) const noexcept;
-#endif // BB_R_LIMB_BITS == 29
-
-    // ── WASM FMA+SIMD paradigm (defined in platform_variants/wasm_fma_simd.hpp) ──
-#ifdef __wasm_simd128__
-    BB_INLINE field montgomery_mul_wasm_fma_simd(const field& other) const noexcept;
-    BB_INLINE static void montgomery_mul_wasm_fma_simd2(
-        const field& a1, const field& b1,
-        const field& a2, const field& b2,
-        field& out1, field& out2) noexcept;
-#endif
-
-    // ── Constexpr fallback (defined in platform_variants/constexpr_fallback.hpp) ──
-    BB_INLINE constexpr field montgomery_mul_constexpr_fallback(const field& other) const noexcept;
-#endif // defined(__wasm__) || !defined(__SIZEOF_INT128__)
     BB_INLINE constexpr field reduce() const noexcept;
     BB_INLINE constexpr field add(const field& other) const noexcept;
     BB_INLINE constexpr field subtract(const field& other) const noexcept;
@@ -588,13 +537,11 @@ template <class Params_> struct alignas(32) field {
     BB_INLINE constexpr field montgomery_mul_big(const field& other) const noexcept;
     BB_INLINE constexpr field montgomery_square() const noexcept;
     BB_INLINE static constexpr void montgomery_mul_paired(
-        const field& a1, const field& b1,
-        const field& a2, const field& b2,
-        field& out1, field& out2) noexcept;
+        const field& a1, const field& b1, const field& a2, const field& b2, field& out1, field& out2) noexcept;
 
 #if (BBERG_NO_ASM == 0)
-    BB_INLINE static field asm_mul_with_coarse_reduction(const field& a, const field& b) noexcept;
-    BB_INLINE static field asm_sqr_with_coarse_reduction(const field& a) noexcept;
+    // asm montmul/square now live in backends/x86_asm.hpp (X86AsmBackend).
+    // Add/sub/reduce/negate remain here since they serve operator+/-/reduce_once.
     BB_INLINE static field asm_add_with_coarse_reduction(const field& a, const field& b) noexcept;
     BB_INLINE static field asm_sub_with_coarse_reduction(const field& a, const field& b) noexcept;
     BB_INLINE static void asm_self_add_with_coarse_reduction(field& a, const field& b) noexcept;

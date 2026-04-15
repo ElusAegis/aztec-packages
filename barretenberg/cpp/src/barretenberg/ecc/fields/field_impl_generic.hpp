@@ -212,134 +212,64 @@ template <class T> constexpr field<T> field<T>::subtract(const field& other) con
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Include compute paradigm files (each self-guards via preprocessor).
-// Order matters: paradigm files may use addc/sbb defined above.
+// Backend selection — see backends/mont_backend.hpp for the #if chain
+// that picks one of X86AsmBackend / NativeBackend / WasmFmaBackend /
+// WasmInt29Backend. All dispatch below delegates blindly via the alias.
+//
+// Include outside `namespace bb {` so that the `namespace bb::detail`
+// inside mont_backend.hpp resolves to the top-level bb::detail (not
+// nested bb::bb::detail).
 // ══════════════════════════════════════════════════════════════════════
 
-#include "platform_variants/native_int128.hpp"
-#include "platform_variants/wasm_int29.hpp"
-#include "platform_variants/wasm_fma_simd.hpp"
-#include "platform_variants/constexpr_fallback.hpp"
+} // namespace bb
+
+#include "backends/mont_backend.hpp"
+
+namespace bb {
 
 // ══════════════════════════════════════════════════════════════════════
-// Dispatch — select paradigm based on platform/flags
+// Dispatch — pure delegation to detail::MontBackend<T>
 // ══════════════════════════════════════════════════════════════════════
 
-/**
- * @brief Unified Montgomery multiplication dispatch.
- *
- * Single entry point for all platforms: large-modulus, x86 asm, native CIOS, WASM variants.
- * operator* and operator*= are trivial one-liners that delegate here.
- */
 template <class T> constexpr field<T> field<T>::montgomery_mul(const field& other) const noexcept
 {
     if constexpr (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
-        return montgomery_mul_big(other);
+        return detail::MontBackend<T>::mul_big(*this, other);
     }
-#if BBERG_NO_ASM == 0
-    if constexpr (!use_generic_arithmetic) {
-        if (!std::is_constant_evaluated()) {
-            field result = asm_mul_with_coarse_reduction(*this, other);
-            result.assert_coarse_form();
-            return result;
-        }
-    }
-#endif
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    return montgomery_mul_native_cios(other);
-#elif defined(MONTMUL_VARIANT_FMA)
-    if (std::is_constant_evaluated()) {
-        return montgomery_mul_constexpr_fallback(other);
-    }
-    return montgomery_mul_wasm_fma_simd(other);
-#else
-    return montgomery_mul_wasm_standard(other);
-#endif
+    return detail::MontBackend<T>::mul(*this, other);
 }
 
-/**
- * @brief Unified Montgomery squaring dispatch.
- */
 template <class T> constexpr field<T> field<T>::montgomery_square() const noexcept
 {
     if constexpr (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
-        return montgomery_mul_big(*this);
+        return detail::MontBackend<T>::mul_big(*this, *this);
     }
-#if BBERG_NO_ASM == 0
-    if constexpr (!use_generic_arithmetic) {
-        if (!std::is_constant_evaluated()) {
-            field result = asm_sqr_with_coarse_reduction(*this);
-            result.assert_coarse_form();
-            return result;
-        }
-    }
-#endif
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    return montgomery_square_native_cios();
-#elif defined(MONTMUL_VARIANT_FMA)
-    // TODO: implement dedicated FMA squaring (Karatsuba square saves ~30% FMAs)
-    return montgomery_mul(*this);
-#else
-    return montgomery_square_wasm_standard();
-#endif
+    return detail::MontBackend<T>::sqr(*this);
 }
 
-/**
- * @brief Paired Montgomery multiplication: out1 = a1*b1, out2 = a2*b2.
- *
- * On FMA SIMD platforms, uses the native SIMD2 paired multiply for better throughput.
- * On all other platforms, falls back to two sequential multiplications.
- */
 template <class T>
 constexpr void field<T>::montgomery_mul_paired(
-    const field& a1, const field& b1,
-    const field& a2, const field& b2,
-    field& out1, field& out2) noexcept
+    const field& a1, const field& b1, const field& a2, const field& b2, field& out1, field& out2) noexcept
 {
-#if defined(MONTMUL_VARIANT_FMA) && defined(__wasm_simd128__)
-    if (!std::is_constant_evaluated()) {
-        montgomery_mul_wasm_fma_simd2(a1, b1, a2, b2, out1, out2);
+    if constexpr (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
+        // Backends' default mul_paired forwards to mul() — the small-modulus
+        // path. For large moduli we must go through mul_big instead.
+        out1 = detail::MontBackend<T>::mul_big(a1, b1);
+        out2 = detail::MontBackend<T>::mul_big(a2, b2);
         return;
     }
-#endif
-    out1 = a1.montgomery_mul(b1);
-    out2 = a2.montgomery_mul(b2);
+    detail::MontBackend<T>::mul_paired(a1, b1, a2, b2, out1, out2);
 }
 
-/**
- * @brief Montgomery multiplication for moduli >= 2^254.
- * Dispatches to paradigm-specific implementation.
- */
-template <class T>
-constexpr field<T> field<T>::montgomery_mul_big(const field& other) const noexcept
+template <class T> constexpr field<T> field<T>::montgomery_mul_big(const field& other) const noexcept
 {
     static_assert(modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD);
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    return montgomery_mul_big_native(other);
-#elif BB_R_LIMB_BITS == 29
-    return montgomery_mul_big_wasm29(other);
-#else
-    // No dedicated 24-bit FMA kernel exists for large moduli yet.
-    // Reuse the generic bigint fallback so FMA builds remain correct.
-    return montgomery_mul_constexpr_fallback(other);
-#endif
+    return detail::MontBackend<T>::mul_big(*this, other);
 }
 
-/**
- * @brief 256×256 → 512-bit wide multiply.
- * Dispatches to paradigm-specific implementation.
- */
 template <class T> constexpr struct field<T>::wide_array field<T>::mul_512(const field& other) const noexcept
 {
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    return mul_512_native(other);
-#else
-    // mul_512 is a raw 256×256→512 integer multiply (no Montgomery reduction).
-    // The WASM implementation uses 29-bit limb splitting internally as an
-    // implementation detail, independent of the Montgomery R representation
-    // (BB_R_LIMB_BITS). Safe to call from any WASM build, including FMA (R=2^264).
-    return mul_512_wasm(other);
-#endif
+    return detail::MontBackend<T>::wide_mul(*this, other);
 }
 
 // NOLINTEND(readability-implicit-bool-conversion)

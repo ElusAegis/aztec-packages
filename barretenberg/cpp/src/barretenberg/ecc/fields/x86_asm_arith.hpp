@@ -6,109 +6,16 @@
 
 #pragma once
 
+// x86 BMI2 inline-asm implementations of add/sub/reduce/negate.
+// These stay as field<T> member functions because they serve
+// operator+/-/reduce_once, not Montgomery multiplication (which lives in
+// backends/x86_asm.hpp as X86AsmBackend).
+
 #if (BBERG_NO_ASM == 0)
-#include "../field_impl.hpp"
-#include "../asm_macros.hpp"
+#include "./asm_macros.hpp"
+#include "./field_impl.hpp"
+
 namespace bb {
-
-template <class T> field<T> field<T>::asm_mul_with_coarse_reduction(const field& a, const field& b) noexcept
-{
-    field r;
-    constexpr uint64_t r_inv = T::r_inv;
-    constexpr uint64_t modulus_0 = modulus.data[0];
-    constexpr uint64_t modulus_1 = modulus.data[1];
-    constexpr uint64_t modulus_2 = modulus.data[2];
-    constexpr uint64_t modulus_3 = modulus.data[3];
-    constexpr uint64_t zero_ref = 0;
-
-    /**
-     * Registers: rax:rdx = multiplication accumulator
-     *            %r12, %r13, %r14, %r15, %rax: work registers for `r`
-     *            %r8, %r9, %rdi, %rsi: scratch registers for multiplication results
-     *            %r10: zero register
-     *            %0: pointer to `a`
-     *            %1: pointer to `b`
-     *            %2: pointer to `r`
-     **/
-    __asm__(MUL("0(%0)", "8(%0)", "16(%0)", "24(%0)", "%1")
-                STORE_FIELD_ELEMENT("%2", "%%r12", "%%r13", "%%r14", "%%r15")
-            :
-            : "%r"(&a),
-              "%r"(&b),
-              "r"(&r),
-              [modulus_0] "m"(modulus_0),
-              [modulus_1] "m"(modulus_1),
-              [modulus_2] "m"(modulus_2),
-              [modulus_3] "m"(modulus_3),
-              [r_inv] "m"(r_inv),
-              [zero_reference] "m"(zero_ref)
-            : "%rdx", "%rdi", "%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15", "cc", "memory");
-    return r;
-}
-
-template <class T> field<T> field<T>::asm_sqr_with_coarse_reduction(const field& a) noexcept
-{
-    field r;
-    constexpr uint64_t r_inv = T::r_inv;
-    constexpr uint64_t modulus_0 = modulus.data[0];
-    constexpr uint64_t modulus_1 = modulus.data[1];
-    constexpr uint64_t modulus_2 = modulus.data[2];
-    constexpr uint64_t modulus_3 = modulus.data[3];
-    constexpr uint64_t zero_ref = 0;
-
-// Our SQR implementation with BMI2 but without ADX has a bug.
-// The case is extremely rare so fixing it is a bit of a waste of time.
-// We'll use MUL instead.
-#if !defined(__ADX__) || defined(DISABLE_ADX)
-    /**
-     * Registers: rax:rdx = multiplication accumulator
-     *            %r12, %r13, %r14, %r15, %rax: work registers for `r`
-     *            %r8, %r9, %rdi, %rsi: scratch registers for multiplication results
-     *            %r10: zero register
-     *            %0: pointer to `a`
-     *            %1: pointer to `b`
-     *            %2: pointer to `r`
-     **/
-    __asm__(MUL("0(%0)", "8(%0)", "16(%0)", "24(%0)", "%1")
-                STORE_FIELD_ELEMENT("%2", "%%r12", "%%r13", "%%r14", "%%r15")
-            :
-            : "%r"(&a),
-              "%r"(&a),
-              "r"(&r),
-              [modulus_0] "m"(modulus_0),
-              [modulus_1] "m"(modulus_1),
-              [modulus_2] "m"(modulus_2),
-              [modulus_3] "m"(modulus_3),
-              [r_inv] "m"(r_inv),
-              [zero_reference] "m"(zero_ref)
-            : "%rdx", "%rdi", "%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15", "cc", "memory");
-
-#else
-
-    /**
-     * Registers: rax:rdx = multiplication accumulator
-     *            %r12, %r13, %r14, %r15, %rax: work registers for `r`
-     *            %r8, %r9, %rdi, %rsi: scratch registers for multiplication results
-     *            %[zero_reference]: memory location of zero value
-     *            %0: pointer to `a`
-     *            %[r_ptr]: memory location of pointer to `r`
-     **/
-    __asm__(SQR("%0")
-            // "movq %[r_ptr], %%rsi                   \n\t"
-            STORE_FIELD_ELEMENT("%1", "%%r12", "%%r13", "%%r14", "%%r15")
-            :
-            : "r"(&a),
-              "r"(&r),
-              [zero_reference] "m"(zero_ref),
-              [modulus_0] "m"(modulus_0),
-              [modulus_1] "m"(modulus_1),
-              [modulus_2] "m"(modulus_2),
-              [modulus_3] "m"(modulus_3),
-              [r_inv] "m"(r_inv)
-            : "%rcx", "%rdx", "%rdi", "%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15", "cc", "memory");
-#endif
-    return r;
-}
 
 template <class T> field<T> field<T>::asm_add_with_coarse_reduction(const field& a, const field& b) noexcept
 {
@@ -281,5 +188,6 @@ template <class T> void field<T>::asm_self_reduce_once(field& a) noexcept
               [not_modulus_3] "m"(not_modulus_3)
             : "%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15", "cc", "memory");
 }
+
 } // namespace bb
 #endif
