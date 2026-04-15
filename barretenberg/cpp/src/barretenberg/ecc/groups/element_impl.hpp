@@ -743,32 +743,110 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
     batch_inversion_accumulator = batch_inversion_accumulator.invert();
 
     // Backward pass: complete inversions and compute additions.
-    // Same pairing opportunity as the forward pass on the initial two muls.
-    // The subsequent sqr and final mul depend on the paired output, so they
-    // stay sequential in this simple version.
-    for (size_t i = num_points - 2; i < num_points; i -= 2) {
-        // Pair: lambda = (y2 - y1) * acc;  acc = acc * (x2 - x1)
+    //
+    // Scheduling: the running-product recurrence on `batch_inversion_accumulator`
+    // forces the per-pair mul_paired (lambda_k = y_diff_k * acc; acc *= x_diff_k)
+    // to stay serial across iterations. However the two other kernels per pair —
+    // lambda.sqr() and (x1 − x3) * lambda — only depend on that pair's own
+    // lambda, so across two iterations they form independent pairs of same-type
+    // ops. Unrolling the loop by 2 lets us fuse:
+    //   - two lambda² ops into one `montgomery_sqr_paired` kernel
+    //     (triangular-product sqr_paired uses ~41% fewer FMAs than mul_paired)
+    //   - two (x1 − x3)·lambda ops into one `montgomery_mul_paired` kernel
+    // Result: 4 paired kernel calls per 2 pairs vs. 2 paired + 2 singles + 2
+    // singles = 6 kernel calls (only 2 of them paired) previously.
+    const size_t num_pairs = num_points >> 1;
+    const size_t num_double_iters = num_pairs >> 1;
+    const bool has_odd_tail = (num_pairs & size_t{ 1 }) != 0;
+
+    size_t i = num_points - 2;
+    for (size_t k = 0; k < num_double_iters; ++k) {
+        // Two pairs per iteration: `hi` at index i, `lo` at index i2 = i - 2.
+        const size_t i2 = i - 2;
+        const size_t out_hi = (i + num_points) >> 1;
+        const size_t out_lo = (i2 + num_points) >> 1;
+
+        // Kernel A_hi: lambda_hi = y_diff_hi * acc;  acc *= x_diff_hi
         Fq::montgomery_mul_paired(points[i + 1].y,
                                   batch_inversion_accumulator,
                                   batch_inversion_accumulator,
                                   points[i + 1].x,
                                   points[i + 1].y,
                                   batch_inversion_accumulator);
-        points[i + 1].x = points[i + 1].y.sqr();
-        // x3 = lambda^2 - (x1 + x2)
-        points[(i + num_points) >> 1].x = points[i + 1].x - scratch_space[i >> 1];
 
-        if (i >= 2) {
-            __builtin_prefetch(points + i - 2);
-            __builtin_prefetch(points + i - 1);
-            __builtin_prefetch(points + ((i + num_points - 2) >> 1));
-            __builtin_prefetch(scratch_space + ((i - 2) >> 1));
+        // Kernel A_lo: serial w.r.t. A_hi because of the acc recurrence.
+        // After this, points[i+1].y = lambda_hi and points[i2+1].y = lambda_lo.
+        Fq::montgomery_mul_paired(points[i2 + 1].y,
+                                  batch_inversion_accumulator,
+                                  batch_inversion_accumulator,
+                                  points[i2 + 1].x,
+                                  points[i2 + 1].y,
+                                  batch_inversion_accumulator);
+
+        // Prefetch the next 2-pair block while kernels B and C run.
+        if (k + 1 < num_double_iters) {
+            __builtin_prefetch(points + (i2 - 4));
+            __builtin_prefetch(points + (i2 - 3));
+            __builtin_prefetch(points + (i2 - 2));
+            __builtin_prefetch(points + (i2 - 1));
+            __builtin_prefetch(points + ((i2 - 2 + num_points) >> 1));
+            __builtin_prefetch(points + ((i2 - 4 + num_points) >> 1));
+            __builtin_prefetch(scratch_space + ((i2 - 4) >> 1));
         }
 
-        // y3 = lambda * (x1 - x3) - y1
-        points[i].x -= points[(i + num_points) >> 1].x;
-        points[i].x *= points[i + 1].y;
-        points[(i + num_points) >> 1].y = points[i].x - points[i].y;
+        // Kernel B: (lambda_hi², lambda_lo²) via the cheaper paired-sqr kernel.
+        Fq::montgomery_sqr_paired(
+            points[i + 1].y, points[i2 + 1].y, points[i + 1].x, points[i2 + 1].x);
+
+        // Save x1 values BEFORE writing to out_hi.x / out_lo.x. In the very
+        // first unrolled iteration (i == num_points - 2), out_lo == i and
+        // out_hi == i + 1, so writing to points[out_lo].x would otherwise
+        // clobber x1_hi. Hoisting into locals makes every iteration uniform.
+        const Fq x1_hi = points[i].x;
+        const Fq x1_lo = points[i2].x;
+
+        // x3 = lambda² − (x1 + x2) for both pairs.
+        points[out_hi].x = points[i + 1].x - scratch_space[i >> 1];
+        points[out_lo].x = points[i2 + 1].x - scratch_space[i2 >> 1];
+
+        // (x1 − x3) for both pairs.
+        Fq x1mx3_hi = x1_hi - points[out_hi].x;
+        Fq x1mx3_lo = x1_lo - points[out_lo].x;
+
+        // Kernel C: (x1 − x3) · lambda for both pairs, paired.
+        // Self-aliasing of each output with its first input is safe: the paired
+        // kernel reads all inputs into locals before writing any output.
+        Fq::montgomery_mul_paired(x1mx3_hi,
+                                  points[i + 1].y,
+                                  x1mx3_lo,
+                                  points[i2 + 1].y,
+                                  x1mx3_hi,
+                                  x1mx3_lo);
+
+        // y3 = (x1 − x3) · lambda − y1 for both pairs. Ordering matters: the
+        // hi write must happen first so its RHS reads points[i].y before the
+        // lo write potentially overwrites it (out_lo == i in the first iter).
+        points[out_hi].y = x1mx3_hi - points[i].y;
+        points[out_lo].y = x1mx3_lo - points[i2].y;
+
+        i -= 4; // Safe to underflow on the final iteration — the loop exits first.
+    }
+
+    // Odd tail: when num_pairs is odd, process the leftmost single pair at
+    // i = 0 using the original 3-kernel sequence.
+    if (has_odd_tail) {
+        Fq::montgomery_mul_paired(points[1].y,
+                                  batch_inversion_accumulator,
+                                  batch_inversion_accumulator,
+                                  points[1].x,
+                                  points[1].y,
+                                  batch_inversion_accumulator);
+        points[1].x = points[1].y.sqr();
+        points[num_points >> 1].x = points[1].x - scratch_space[0];
+
+        points[0].x -= points[num_points >> 1].x;
+        points[0].x *= points[1].y;
+        points[num_points >> 1].y = points[0].x - points[0].y;
     }
 }
 
