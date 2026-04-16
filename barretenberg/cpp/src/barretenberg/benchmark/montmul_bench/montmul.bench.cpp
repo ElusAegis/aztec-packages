@@ -1,9 +1,9 @@
 // Templated microbenchmark for four BN254 scalar-field Montgomery kernels:
 //
-//   Mul       : x = x * y                        (single montgomery_mul)
-//   Sqr       : x = x^2                          (single montgomery_square)
-//   MulPaired : (x1, x2) = (x1*y1, x2*y2)        (montgomery_mul_paired)
-//   SqrPaired : (x1, x2) = (x1^2,  x2^2)         (montgomery_sqr_paired)
+//   Mul        : x = x * y                       (single montgomery_mul)
+//   Sqr        : x = x^2                         (single montgomery_square)
+//   MulBatch2  : (x1, x2) = (x1*y1, x2*y2)       (montgomery_mul_batched<2>)
+//   SqrBatch2  : (x1, x2) = (x1^2,  x2^2)        (montgomery_sqr_batched<2>)
 //
 // Each kernel runs in two fixtures:
 //
@@ -21,9 +21,10 @@
 // duplicate numbers and doubles bench wall-time for no new signal.
 //
 // `kWidth` on each op tag records how many field multiplications a single
-// kernel call performs (1 for single, 2 for paired). Latency and throughput
-// reports divide wall time by width to normalise everything to ns/mul, so
-// the single-vs-paired speedup reads straight off the per-mul column.
+// kernel call performs (1 for single, 2 for batched<2>). Latency and
+// throughput reports divide wall time by width to normalise everything to
+// ns/mul, so the single-vs-batched speedup reads straight off the per-mul
+// column.
 
 #include "barretenberg/ecc/curves/bn254/bn254.hpp"
 #include <array>
@@ -48,21 +49,21 @@ struct SqrOp {
     template <typename F> BB_INLINE static void run(F* x, const F* /*y*/) { x[0].self_sqr(); }
 };
 
-struct MulPairedOp {
+struct MulBatch2Op {
     static constexpr size_t kWidth = 2;
-    static constexpr const char* kName = "MulPaired";
+    static constexpr const char* kName = "MulBatch2";
     template <typename F> BB_INLINE static void run(F* x, const F* y)
     {
-        F::montgomery_mul_paired(x[0], y[0], x[1], y[1], x[0], x[1]);
+        F::template montgomery_mul_batched<2>({ &x[0], &x[1] }, { &y[0], &y[1] }, { &x[0], &x[1] });
     }
 };
 
-struct SqrPairedOp {
+struct SqrBatch2Op {
     static constexpr size_t kWidth = 2;
-    static constexpr const char* kName = "SqrPaired";
+    static constexpr const char* kName = "SqrBatch2";
     template <typename F> BB_INLINE static void run(F* x, const F* /*y*/)
     {
-        F::montgomery_sqr_paired(x[0], x[1], x[0], x[1]);
+        F::template montgomery_sqr_batched<2>({ &x[0], &x[1] }, { &x[0], &x[1] });
     }
 };
 
@@ -115,8 +116,8 @@ template <typename F, typename Op> void Throughput(benchmark::State& state)
 
 REGISTER_OP(MulOp);
 REGISTER_OP(SqrOp);
-REGISTER_OP(MulPairedOp);
-REGISTER_OP(SqrPairedOp);
+REGISTER_OP(MulBatch2Op);
+REGISTER_OP(SqrBatch2Op);
 
 #undef REGISTER_OP
 

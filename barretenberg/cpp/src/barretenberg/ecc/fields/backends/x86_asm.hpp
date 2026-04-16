@@ -14,6 +14,8 @@
 
 #if (BBERG_NO_ASM == 0)
 
+#include <array>
+
 #include "../asm_macros.hpp"
 #include "../field_declarations.hpp"
 #include "native_int128.hpp"
@@ -56,24 +58,26 @@ template <class Params> struct X86AsmBackend {
         return NativeBackend<Params>::wide_mul(lhs, rhs);
     }
 
-    BB_INLINE static constexpr void mul_paired(const field<Params>& a1,
-                                               const field<Params>& b1,
-                                               const field<Params>& a2,
-                                               const field<Params>& b2,
-                                               field<Params>& out1,
-                                               field<Params>& out2) noexcept
+    // Batched Montgomery mul: outs[i] = as[i] * bs[i] for i in [0, N).
+    // No SIMD asm kernel — just N sequential single mul() calls.
+    template <size_t N>
+    BB_INLINE static constexpr void mul_batched(std::array<const field<Params>*, N> as,
+                                                std::array<const field<Params>*, N> bs,
+                                                std::array<field<Params>*, N> outs) noexcept
     {
-        out1 = mul(a1, b1);
-        out2 = mul(a2, b2);
+        for (size_t i = 0; i < N; ++i) {
+            *outs[i] = mul(*as[i], *bs[i]);
+        }
     }
 
-    BB_INLINE static constexpr void sqr_paired(const field<Params>& a1,
-                                               const field<Params>& a2,
-                                               field<Params>& out1,
-                                               field<Params>& out2) noexcept
+    // Batched Montgomery sqr: outs[i] = as[i]^2 for i in [0, N).
+    template <size_t N>
+    BB_INLINE static constexpr void sqr_batched(std::array<const field<Params>*, N> as,
+                                                std::array<field<Params>*, N> outs) noexcept
     {
-        out1 = sqr(a1);
-        out2 = sqr(a2);
+        for (size_t i = 0; i < N; ++i) {
+            *outs[i] = sqr(*as[i]);
+        }
     }
 
   private:

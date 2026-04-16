@@ -248,31 +248,38 @@ template <class T> constexpr field<T> field<T>::montgomery_square() const noexce
 }
 
 template <class T>
-constexpr void field<T>::montgomery_mul_paired(
-    const field& a1, const field& b1, const field& a2, const field& b2, field& out1, field& out2) noexcept
+template <size_t N>
+constexpr void field<T>::montgomery_mul_batched(std::array<const field*, N> as,
+                                                std::array<const field*, N> bs,
+                                                std::array<field*, N> outs) noexcept
 {
     if constexpr (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
-        // Backends' default mul_paired forwards to mul() — the small-modulus
-        // path. For large moduli we must go through mul_big instead.
-        out1 = detail::MontBackend<T>::mul_big(a1, b1);
-        out2 = detail::MontBackend<T>::mul_big(a2, b2);
+        // Backends' default mul_batched lowers to mul() — the small-modulus
+        // path. For large moduli we must go through mul_big instead, one
+        // slot at a time (no big-modulus paired/batched kernel today).
+        for (size_t i = 0; i < N; ++i) {
+            *outs[i] = detail::MontBackend<T>::mul_big(*as[i], *bs[i]);
+        }
         return;
     }
-    detail::MontBackend<T>::mul_paired(a1, b1, a2, b2, out1, out2);
+    detail::MontBackend<T>::template mul_batched<N>(as, bs, outs);
 }
 
 template <class T>
-constexpr void field<T>::montgomery_sqr_paired(const field& a1, const field& a2, field& out1, field& out2) noexcept
+template <size_t N>
+constexpr void field<T>::montgomery_sqr_batched(std::array<const field*, N> as,
+                                                std::array<field*, N> outs) noexcept
 {
     if constexpr (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
-        // Large-modulus path: the small-modulus sqr_paired assumes the
+        // Large-modulus path: the small-modulus sqr_batched assumes the
         // backend's regular mul/sqr is safe, which isn't true for big moduli.
-        // Route to mul_big(x, x) twice, analogous to montgomery_mul_paired.
-        out1 = detail::MontBackend<T>::mul_big(a1, a1);
-        out2 = detail::MontBackend<T>::mul_big(a2, a2);
+        // Route to mul_big(x, x) per slot, analogous to montgomery_mul_batched.
+        for (size_t i = 0; i < N; ++i) {
+            *outs[i] = detail::MontBackend<T>::mul_big(*as[i], *as[i]);
+        }
         return;
     }
-    detail::MontBackend<T>::sqr_paired(a1, a2, out1, out2);
+    detail::MontBackend<T>::template sqr_batched<N>(as, outs);
 }
 
 template <class T> constexpr field<T> field<T>::montgomery_mul_big(const field& other) const noexcept

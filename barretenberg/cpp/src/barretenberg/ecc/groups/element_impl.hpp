@@ -100,14 +100,14 @@ template <class Fq, class Fr, class T> constexpr void element<Fq, Fr, T>::self_d
     // Pair 1: (x², y²) — the two independent input-coordinate squarings.
     Fq T0;
     Fq T1;
-    Fq::montgomery_sqr_paired(x, y, T0, T1);
+    Fq::template montgomery_sqr_batched<2>({ &x, &y }, { &T0, &T1 });
 
     // Pair 2: (T1², (T1 + x)²) — the two downstream squarings both depend on
     // T1 but not on each other.
     Fq T1_plus_x = T1 + x;
     Fq T2;
     Fq T1_sq2;
-    Fq::montgomery_sqr_paired(T1, T1_plus_x, T2, T1_sq2);
+    Fq::template montgomery_sqr_batched<2>({ &T1, &T1_plus_x }, { &T2, &T1_sq2 });
 
     // T3 = T0 + T2;  T1 = T1_sq2 - T3;  T1 += T1;  // T1 = 4*S
     Fq T3 = T0 + T2;
@@ -128,7 +128,7 @@ template <class Fq, class Fr, class T> constexpr void element<Fq, Fr, T>::self_d
     Fq z_doubled = z + z;
     Fq new_z;
     Fq x_new;
-    Fq::montgomery_mul_paired(z_doubled, y, T3, T3, new_z, x_new);
+    Fq::template montgomery_mul_batched<2>({ &z_doubled, &T3 }, { &y, &T3 }, { &new_z, &x_new });
 
     // x = x_new - 2*T1
     Fq twoT1 = T1 + T1;
@@ -178,7 +178,7 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
     // Pair 1: T1 = other.x * T0, T2 = z * T0 (both use T0 = z1^2)
     Fq T1;
     Fq T2;
-    Fq::montgomery_mul_paired(other.x, T0, z, T0, T1, T2);
+    Fq::template montgomery_mul_batched<2>({ &other.x, &z }, { &T0, &T0 }, { &T1, &T2 });
     T1 -= x;       // H = x2*z1^2 - x1
     T2 *= other.y; // z1^3 * y2 (sequential — depends on pair 1 output)
     T2 -= y;       // y2*z1^3 - y1
@@ -212,7 +212,7 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
     T3 += T3;
 
     // Pair 2: T1 = T1*T3 (4HHH), T3 = T3*x (4HH*x1)
-    Fq::montgomery_mul_paired(T1, T3, T3, x, T1, T3);
+    Fq::template montgomery_mul_batched<2>({ &T1, &T3 }, { &T3, &x }, { &T1, &T3 });
 
     T0 = T3 + T3; // 8HH*x1
     T0 += T1;     // 8HH*x1 + 4HHH
@@ -221,7 +221,7 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
     T3 -= x;      // 4HH*x1 - x3
 
     // Pair 3: T1 = T1*y (4HHH*y1), T3 = T3*T2 (R*(4HH*x1-x3))
-    Fq::montgomery_mul_paired(T1, y, T3, T2, T1, T3);
+    Fq::template montgomery_mul_batched<2>({ &T1, &T3 }, { &y, &T2 }, { &T1, &T3 });
 
     T1 += T1;    // 8HHH*y1
     y = T3 - T1; // y3 = R*(4HH*x1-x3) - 8HHH*y1
@@ -300,16 +300,16 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
     // op9 (I²) can run speculatively because they never overflow even on the
     // H==0 edge-case path (which is ~never hit for random MSM inputs).
 
-    // Pair 1: (z², other.z²) — pure squaring pair, routes to sqr_paired
-    // (triangular-product kernel; ~41% fewer FMAs per lane than mul_paired).
+    // Pair 1: (z², other.z²) — pure squaring pair, routes to the sqr-batched
+    // triangular-product kernel (~41% fewer FMAs per lane than mul-batched).
     Fq Z1Z1;
     Fq Z2Z2;
-    Fq::montgomery_sqr_paired(z, other.z, Z1Z1, Z2Z2);
+    Fq::template montgomery_sqr_batched<2>({ &z, &other.z }, { &Z1Z1, &Z2Z2 });
 
     // Pair 2: (Z1Z1·z, Z1Z1·other.x)
     Fq S2;
     Fq U2;
-    Fq::montgomery_mul_paired(Z1Z1, z, Z1Z1, other.x, S2, U2);
+    Fq::template montgomery_mul_batched<2>({ &Z1Z1, &Z1Z1 }, { &z, &other.x }, { &S2, &U2 });
 
     // Precompute (z + other.z) and (Z1Z1 + Z2Z2) into locals so *this stays
     // intact if we bail out to self_dbl() / self_set_infinity() on the edge
@@ -317,10 +317,10 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
     Fq z_sum = z + other.z;
     Fq Z_sum = Z1Z1 + Z2Z2;
 
-    // Pair 3: (S2·other.y, Z2Z2·x)  — S2 output aliases S2 input (safe: paired
-    // kernel reads all inputs to locals before writing any output)
+    // Pair 3: (S2·other.y, Z2Z2·x)  — S2 output aliases S2 input (safe: the
+    // batched kernel reads all inputs to locals before writing any output)
     Fq U1;
-    Fq::montgomery_mul_paired(S2, other.y, Z2Z2, x, S2, U1);
+    Fq::template montgomery_mul_batched<2>({ &S2, &Z2Z2 }, { &other.y, &x }, { &S2, &U1 });
 
     // H and 2H are ready as soon as U1 is.
     Fq H(U2 - U1);
@@ -330,7 +330,7 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
     // edge case but is always numerically safe (never overflows).
     Fq S1_pre;
     Fq z_sq;
-    Fq::montgomery_mul_paired(Z2Z2, other.z, z_sum, z_sum, S1_pre, z_sq);
+    Fq::template montgomery_mul_batched<2>({ &Z2Z2, &z_sum }, { &other.z, &z_sum }, { &S1_pre, &z_sq });
 
     // z's remaining subtraction before the final mul.
     Fq z_after_sub = z_sq - Z_sum;
@@ -338,7 +338,7 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
     // Pair 5: (S1·y, (2H)²) — (2H)² is also speculative but safe.
     Fq S1;
     Fq I_var;
-    Fq::montgomery_mul_paired(S1_pre, y, twoH, twoH, S1, I_var);
+    Fq::template montgomery_mul_batched<2>({ &S1_pre, &twoH }, { &y, &twoH }, { &S1, &I_var });
 
     // F and 2F are ready as soon as S1 is (original code's `F += F`).
     Fq F(S2 - S1);
@@ -360,7 +360,7 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
     // Pair 6: (H·I, U1·I)
     Fq J;
     Fq U1_new;
-    Fq::montgomery_mul_paired(H, I_var, U1, I_var, J, U1_new);
+    Fq::template montgomery_mul_batched<2>({ &H, &U1 }, { &I_var, &I_var }, { &J, &U1_new });
 
     // U2 update = 2·U1_new + J (all adds).
     Fq U2_sum = U1_new + U1_new;
@@ -369,7 +369,7 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
     // Pair 7: ((2F)², z_after_sub·H) — final x squaring fused with final z mul.
     Fq x_F_sq;
     Fq z_new;
-    Fq::montgomery_mul_paired(twoF, twoF, z_after_sub, H, x_F_sq, z_new);
+    Fq::template montgomery_mul_batched<2>({ &twoF, &z_after_sub }, { &twoF, &H }, { &x_F_sq, &z_new });
 
     x = x_F_sq - U2_sum;
     Fq y_pre = U1_new - x;
@@ -377,7 +377,7 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
     // Pair 8: (J·S1, y_pre·(2F))
     Fq J_S1;
     Fq y_mul;
-    Fq::montgomery_mul_paired(J, S1, y_pre, twoF, J_S1, y_mul);
+    Fq::template montgomery_mul_batched<2>({ &J, &y_pre }, { &S1, &twoF }, { &J_S1, &y_mul });
 
     Fq J_doubled = J_S1 + J_S1;
     y = y_mul - J_doubled;
@@ -727,14 +727,12 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
         points[i + 1].x -= points[i].x;                        // x2 - x1
         points[i + 1].y -= points[i].y;                        // y2 - y1
         // Pair: points[i+1].y = points[i+1].y * acc;  acc = acc * points[i+1].x
-        // (Both use the old acc; output aliasing is safe — the paired kernel
+        // (Both use the old acc; output aliasing is safe — the batched kernel
         //  reads all inputs into locals before writing any output.)
-        Fq::montgomery_mul_paired(points[i + 1].y,
-                                  batch_inversion_accumulator,
-                                  batch_inversion_accumulator,
-                                  points[i + 1].x,
-                                  points[i + 1].y,
-                                  batch_inversion_accumulator);
+        Fq::template montgomery_mul_batched<2>(
+            { &points[i + 1].y, &batch_inversion_accumulator },
+            { &batch_inversion_accumulator, &points[i + 1].x },
+            { &points[i + 1].y, &batch_inversion_accumulator });
     }
 
     if (batch_inversion_accumulator == Fq::zero()) {
@@ -745,16 +743,16 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
     // Backward pass: complete inversions and compute additions.
     //
     // Scheduling: the running-product recurrence on `batch_inversion_accumulator`
-    // forces the per-pair mul_paired (lambda_k = y_diff_k * acc; acc *= x_diff_k)
+    // forces the per-pair A kernel (lambda_k = y_diff_k * acc; acc *= x_diff_k)
     // to stay serial across iterations. However the two other kernels per pair —
-    // lambda.sqr() and (x1 − x3) * lambda — only depend on that pair's own
+    // `lambda.sqr()` and `(x1 − x3) * lambda` — depend only on that pair's own
     // lambda, so across two iterations they form independent pairs of same-type
     // ops. Unrolling the loop by 2 lets us fuse:
-    //   - two lambda² ops into one `montgomery_sqr_paired` kernel
-    //     (triangular-product sqr_paired uses ~41% fewer FMAs than mul_paired)
-    //   - two (x1 − x3)·lambda ops into one `montgomery_mul_paired` kernel
-    // Result: 4 paired kernel calls per 2 pairs vs. 2 paired + 2 singles + 2
-    // singles = 6 kernel calls (only 2 of them paired) previously.
+    //   - two lambda² ops into one `montgomery_sqr_batched<2>` kernel
+    //     (triangular-product sqr kernel, ~41% fewer FMAs than mul_batched)
+    //   - two (x1 − x3)·lambda ops into one `montgomery_mul_batched<2>` kernel
+    // Result: 4 batched<2> kernel calls per 2 pairs vs. 2 paired + 2 singles +
+    // 2 singles = 6 kernel calls (only 2 of them batched) previously.
     const size_t num_pairs = num_points >> 1;
     const size_t num_double_iters = num_pairs >> 1;
     const bool has_odd_tail = (num_pairs & size_t{ 1 }) != 0;
@@ -767,21 +765,17 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
         const size_t out_lo = (i2 + num_points) >> 1;
 
         // Kernel A_hi: lambda_hi = y_diff_hi * acc;  acc *= x_diff_hi
-        Fq::montgomery_mul_paired(points[i + 1].y,
-                                  batch_inversion_accumulator,
-                                  batch_inversion_accumulator,
-                                  points[i + 1].x,
-                                  points[i + 1].y,
-                                  batch_inversion_accumulator);
+        Fq::template montgomery_mul_batched<2>(
+            { &points[i + 1].y, &batch_inversion_accumulator },
+            { &batch_inversion_accumulator, &points[i + 1].x },
+            { &points[i + 1].y, &batch_inversion_accumulator });
 
         // Kernel A_lo: serial w.r.t. A_hi because of the acc recurrence.
         // After this, points[i+1].y = lambda_hi and points[i2+1].y = lambda_lo.
-        Fq::montgomery_mul_paired(points[i2 + 1].y,
-                                  batch_inversion_accumulator,
-                                  batch_inversion_accumulator,
-                                  points[i2 + 1].x,
-                                  points[i2 + 1].y,
-                                  batch_inversion_accumulator);
+        Fq::template montgomery_mul_batched<2>(
+            { &points[i2 + 1].y, &batch_inversion_accumulator },
+            { &batch_inversion_accumulator, &points[i2 + 1].x },
+            { &points[i2 + 1].y, &batch_inversion_accumulator });
 
         // Prefetch the next 2-pair block while kernels B and C run.
         if (k + 1 < num_double_iters) {
@@ -794,9 +788,9 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
             __builtin_prefetch(scratch_space + ((i2 - 4) >> 1));
         }
 
-        // Kernel B: (lambda_hi², lambda_lo²) via the cheaper paired-sqr kernel.
-        Fq::montgomery_sqr_paired(
-            points[i + 1].y, points[i2 + 1].y, points[i + 1].x, points[i2 + 1].x);
+        // Kernel B: (lambda_hi², lambda_lo²) via the cheaper batched-sqr kernel.
+        Fq::template montgomery_sqr_batched<2>(
+            { &points[i + 1].y, &points[i2 + 1].y }, { &points[i + 1].x, &points[i2 + 1].x });
 
         // Save x1 values BEFORE writing to out_hi.x / out_lo.x. In the very
         // first unrolled iteration (i == num_points - 2), out_lo == i and
@@ -813,15 +807,12 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
         Fq x1mx3_hi = x1_hi - points[out_hi].x;
         Fq x1mx3_lo = x1_lo - points[out_lo].x;
 
-        // Kernel C: (x1 − x3) · lambda for both pairs, paired.
-        // Self-aliasing of each output with its first input is safe: the paired
-        // kernel reads all inputs into locals before writing any output.
-        Fq::montgomery_mul_paired(x1mx3_hi,
-                                  points[i + 1].y,
-                                  x1mx3_lo,
-                                  points[i2 + 1].y,
-                                  x1mx3_hi,
-                                  x1mx3_lo);
+        // Kernel C: (x1 − x3) · lambda for both pairs, batched.
+        // Self-aliasing of each output with its first input is safe: the
+        // batched kernel reads all inputs into locals before writing any output.
+        Fq::template montgomery_mul_batched<2>({ &x1mx3_hi, &x1mx3_lo },
+                                               { &points[i + 1].y, &points[i2 + 1].y },
+                                               { &x1mx3_hi, &x1mx3_lo });
 
         // y3 = (x1 − x3) · lambda − y1 for both pairs. Ordering matters: the
         // hi write must happen first so its RHS reads points[i].y before the
@@ -835,12 +826,10 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
     // Odd tail: when num_pairs is odd, process the leftmost single pair at
     // i = 0 using the original 3-kernel sequence.
     if (has_odd_tail) {
-        Fq::montgomery_mul_paired(points[1].y,
-                                  batch_inversion_accumulator,
-                                  batch_inversion_accumulator,
-                                  points[1].x,
-                                  points[1].y,
-                                  batch_inversion_accumulator);
+        Fq::template montgomery_mul_batched<2>(
+            { &points[1].y, &batch_inversion_accumulator },
+            { &batch_inversion_accumulator, &points[1].x },
+            { &points[1].y, &batch_inversion_accumulator });
         points[1].x = points[1].y.sqr();
         points[num_points >> 1].x = points[1].x - scratch_space[0];
 

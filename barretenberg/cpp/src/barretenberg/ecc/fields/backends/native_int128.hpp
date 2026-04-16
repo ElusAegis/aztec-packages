@@ -10,6 +10,8 @@
 
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
 
+#include <array>
+
 #include "../field_declarations.hpp"
 
 namespace bb::detail {
@@ -23,28 +25,28 @@ template <class Params> struct NativeBackend {
     BB_INLINE static constexpr typename field<Params>::wide_array wide_mul(const field<Params>& lhs,
                                                                            const field<Params>& rhs) noexcept;
 
-    // Default paired multiply: two sequential multiplies. Only WasmFmaBackend
-    // overrides this with a genuine SIMD-paired implementation.
-    BB_INLINE static constexpr void mul_paired(const field<Params>& a1,
-                                               const field<Params>& b1,
-                                               const field<Params>& a2,
-                                               const field<Params>& b2,
-                                               field<Params>& out1,
-                                               field<Params>& out2) noexcept
+    // Batched Montgomery mul: outs[i] = as[i] * bs[i] for i in [0, N).
+    // Native backend has no SIMD kernel — N sequential CIOS multiplies.
+    // Only WasmFmaBackend specializes this for N=2 (real SIMD pairing) and
+    // for N=3 (paired FMA + integer co-scheduling).
+    template <size_t N>
+    BB_INLINE static constexpr void mul_batched(std::array<const field<Params>*, N> as,
+                                                std::array<const field<Params>*, N> bs,
+                                                std::array<field<Params>*, N> outs) noexcept
     {
-        out1 = mul(a1, b1);
-        out2 = mul(a2, b2);
+        for (size_t i = 0; i < N; ++i) {
+            *outs[i] = mul(*as[i], *bs[i]);
+        }
     }
 
-    // Default paired square: two sequential squares. Only WasmFmaBackend
-    // overrides this with a triangular-product SIMD-paired implementation.
-    BB_INLINE static constexpr void sqr_paired(const field<Params>& a1,
-                                               const field<Params>& a2,
-                                               field<Params>& out1,
-                                               field<Params>& out2) noexcept
+    // Batched Montgomery sqr: outs[i] = as[i]^2 for i in [0, N).
+    template <size_t N>
+    BB_INLINE static constexpr void sqr_batched(std::array<const field<Params>*, N> as,
+                                                std::array<field<Params>*, N> outs) noexcept
     {
-        out1 = sqr(a1);
-        out2 = sqr(a2);
+        for (size_t i = 0; i < N; ++i) {
+            *outs[i] = sqr(*as[i]);
+        }
     }
 
   private:

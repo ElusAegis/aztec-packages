@@ -13,6 +13,8 @@
 
 #if defined(__wasm__) || !defined(__SIZEOF_INT128__)
 
+#include <array>
+
 #include "../field_declarations.hpp"
 #include "../field_montgomery_config.hpp"
 
@@ -27,26 +29,26 @@ template <class Params> struct WasmInt29Backend {
     BB_INLINE static constexpr typename field<Params>::wide_array wide_mul(const field<Params>& lhs,
                                                                            const field<Params>& rhs) noexcept;
 
-    // Default paired multiply: two sequential mul() calls.
-    BB_INLINE static constexpr void mul_paired(const field<Params>& a1,
-                                               const field<Params>& b1,
-                                               const field<Params>& a2,
-                                               const field<Params>& b2,
-                                               field<Params>& out1,
-                                               field<Params>& out2) noexcept
+    // Batched Montgomery mul: outs[i] = as[i] * bs[i] for i in [0, N).
+    // 9×29-bit backend has no SIMD kernel — N sequential schoolbook multiplies.
+    template <size_t N>
+    BB_INLINE static constexpr void mul_batched(std::array<const field<Params>*, N> as,
+                                                std::array<const field<Params>*, N> bs,
+                                                std::array<field<Params>*, N> outs) noexcept
     {
-        out1 = mul(a1, b1);
-        out2 = mul(a2, b2);
+        for (size_t i = 0; i < N; ++i) {
+            *outs[i] = mul(*as[i], *bs[i]);
+        }
     }
 
-    // Default paired square: two sequential sqr() calls.
-    BB_INLINE static constexpr void sqr_paired(const field<Params>& a1,
-                                               const field<Params>& a2,
-                                               field<Params>& out1,
-                                               field<Params>& out2) noexcept
+    // Batched Montgomery sqr: outs[i] = as[i]^2 for i in [0, N).
+    template <size_t N>
+    BB_INLINE static constexpr void sqr_batched(std::array<const field<Params>*, N> as,
+                                                std::array<field<Params>*, N> outs) noexcept
     {
-        out1 = sqr(a1);
-        out2 = sqr(a2);
+        for (size_t i = 0; i < N; ++i) {
+            *outs[i] = sqr(*as[i]);
+        }
     }
 
     // Exposed for FMA backend (which reuses wide_mul's 29-bit splitting).

@@ -536,12 +536,28 @@ template <class Params_> struct alignas(32) field {
     BB_INLINE constexpr field montgomery_mul(const field& other) const noexcept;
     BB_INLINE constexpr field montgomery_mul_big(const field& other) const noexcept;
     BB_INLINE constexpr field montgomery_square() const noexcept;
-    BB_INLINE static constexpr void montgomery_mul_paired(
-        const field& a1, const field& b1, const field& a2, const field& b2, field& out1, field& out2) noexcept;
-    BB_INLINE static constexpr void montgomery_sqr_paired(const field& a1,
-                                                          const field& a2,
-                                                          field& out1,
-                                                          field& out2) noexcept;
+
+    // Batched Montgomery mul: *outs[i] = *as[i] * *bs[i] for i in [0, N).
+    //
+    // Dispatches to the active backend's mul_batched<N>. On the WASM FMA-SIMD
+    // backend, N=2 is a genuine SIMD-paired kernel and N=3 co-schedules a
+    // paired FMA kernel alongside a scalar-integer Montgomery mul to exploit
+    // otherwise-idle integer execution ports. On all other backends, this
+    // lowers to N sequential single mul() calls.
+    //
+    // Large-modulus fallback: the small-modulus backends assume Montgomery
+    // form fits in the coarse [0, 2p) range; for large moduli we route each
+    // slot through mul_big, preserving the existing paired-kernel semantics.
+    template <size_t N>
+    BB_INLINE static constexpr void montgomery_mul_batched(std::array<const field*, N> as,
+                                                           std::array<const field*, N> bs,
+                                                           std::array<field*, N> outs) noexcept;
+
+    // Batched Montgomery sqr: *outs[i] = *as[i]^2 for i in [0, N). See
+    // montgomery_mul_batched for dispatch semantics.
+    template <size_t N>
+    BB_INLINE static constexpr void montgomery_sqr_batched(std::array<const field*, N> as,
+                                                           std::array<field*, N> outs) noexcept;
 
 #if (BBERG_NO_ASM == 0)
     // asm montmul/square now live in backends/x86_asm.hpp (X86AsmBackend).

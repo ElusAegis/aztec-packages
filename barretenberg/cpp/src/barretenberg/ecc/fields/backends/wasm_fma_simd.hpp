@@ -7,10 +7,11 @@
 // -msimd128 -mrelaxed-simd.
 //
 // Entry points:
-//   mul         — single mul, SIMD within (P_lo/P_cross parallel)
-//   mul_paired  — dual mul, each SIMD lane carries a full independent multiply
-//   sqr         — dedicated triangular-product square, SIMD via paired kernel
-//   sqr_paired  — dual sqr, each SIMD lane carries an independent squaring
+//   mul          — single mul, SIMD within (P_lo/P_cross parallel)
+//   sqr          — dedicated triangular-product square, SIMD via paired kernel
+//   mul_batched  — N independent muls at once (N=2 routes through the paired
+//                  SIMD kernel; other N fall back to paired + singles)
+//   sqr_batched  — N independent sqrs at once, symmetric to mul_batched
 //
 // ╔══════════════════════════════════════════════════════════════════════╗
 // ║  ⚠  CORRECTNESS WARNING — FMA mul_big delegation                      ║
@@ -28,6 +29,7 @@
 
 #if BB_R_LIMB_BITS == 24 && defined(__wasm_simd128__)
 
+#include <array>
 #include <cmath>
 #include <wasm_simd128.h>
 
@@ -84,35 +86,61 @@ template <class Params> struct WasmFmaBackend {
         return WasmInt29Backend<Params>::wide_mul(lhs, rhs);
     }
 
-    BB_INLINE static constexpr void mul_paired(const field<Params>& a1,
-                                               const field<Params>& b1,
-                                               const field<Params>& a2,
-                                               const field<Params>& b2,
-                                               field<Params>& out1,
-                                               field<Params>& out2) noexcept
+    // Batched Montgomery mul: outs[i] = as[i] * bs[i] for i in [0, N).
+    //
+    // Routing:
+    //   N=1  → single-lane mul (SIMD within the kernel).
+    //   N=2  → mul_paired_fma_simd — 2 SIMD lanes, 1 kernel call.
+    //   N≥3  → mul_paired_fma_simd for slots [0,1] + single mul() for [2..N).
+    template <size_t N>
+    BB_INLINE static constexpr void mul_batched(std::array<const field<Params>*, N> as,
+                                                std::array<const field<Params>*, N> bs,
+                                                std::array<field<Params>*, N> outs) noexcept
     {
         if (std::is_constant_evaluated()) {
-            out1 = ConstexprFallback::mul(a1, b1);
-            out2 = ConstexprFallback::mul(a2, b2);
+            for (size_t i = 0; i < N; ++i) {
+                *outs[i] = ConstexprFallback::mul(*as[i], *bs[i]);
+            }
             return;
         }
-        mul_paired_fma_simd(a1, b1, a2, b2, out1, out2);
+        if constexpr (N == 0) {
+            return;
+        } else if constexpr (N == 1) {
+            *outs[0] = mul_via_paired_fma_simd(*as[0], *bs[0]);
+        } else {
+            mul_paired_fma_simd(*as[0], *bs[0], *as[1], *bs[1], *outs[0], *outs[1]);
+            for (size_t i = 2; i < N; ++i) {
+                *outs[i] = mul_via_paired_fma_simd(*as[i], *bs[i]);
+            }
+        }
     }
 
-    // Squares two independent inputs in the two SIMD lanes using the
-    // triangular-product kernel (57 mul/FMA per lane vs 97 for the mul
-    // kernel — ~41% fewer multiplications thanks to a·b = b·a).
-    BB_INLINE static constexpr void sqr_paired(const field<Params>& a1,
-                                               const field<Params>& a2,
-                                               field<Params>& out1,
-                                               field<Params>& out2) noexcept
+    // Batched Montgomery sqr: outs[i] = as[i]^2 for i in [0, N).
+    //
+    // N=2 uses the triangular-product paired kernel (~41% fewer mul/FMAs per
+    // lane than mul_paired thanks to a·b = b·a symmetry).
+    template <size_t N>
+    BB_INLINE static constexpr void sqr_batched(std::array<const field<Params>*, N> as,
+                                                std::array<field<Params>*, N> outs) noexcept
     {
         if (std::is_constant_evaluated()) {
-            out1 = ConstexprFallback::mul(a1, a1);
-            out2 = ConstexprFallback::mul(a2, a2);
+            for (size_t i = 0; i < N; ++i) {
+                *outs[i] = ConstexprFallback::mul(*as[i], *as[i]);
+            }
             return;
         }
-        sqr_paired_fma_simd(a1, a2, out1, out2);
+        if constexpr (N == 0) {
+            return;
+        } else if constexpr (N == 1) {
+            field<Params> scratch;
+            sqr_paired_fma_simd(*as[0], *as[0], *outs[0], scratch);
+        } else {
+            sqr_paired_fma_simd(*as[0], *as[1], *outs[0], *outs[1]);
+            for (size_t i = 2; i < N; ++i) {
+                field<Params> scratch;
+                sqr_paired_fma_simd(*as[i], *as[i], *outs[i], scratch);
+            }
+        }
     }
 
   private:
@@ -450,8 +478,8 @@ field<Params> WasmFmaBackend<Params>::mul_fma_simd(const field<Params>& lhs, con
 
 template <class Params>
 void WasmFmaBackend<Params>::mul_paired_fma_simd(const field<Params>& a1,
-                                                 const field<Params>& b1,
-                                                 const field<Params>& a2,
+                                                      const field<Params>& b1,
+                                                      const field<Params>& a2,
                                                  const field<Params>& b2,
                                                  field<Params>& out1,
                                                  field<Params>& out2) noexcept
@@ -598,8 +626,8 @@ void WasmFmaBackend<Params>::mul_paired_fma_simd(const field<Params>& a1,
 
 template <class Params>
 void WasmFmaBackend<Params>::sqr_paired_fma_simd(const field<Params>& a1,
-                                                 const field<Params>& a2,
-                                                 field<Params>& out1,
+                                                      const field<Params>& a2,
+                                                      field<Params>& out1,
                                                  field<Params>& out2) noexcept
 {
     constexpr uint64_t M24 = (1ULL << R_LIMB_BITS) - 1;
