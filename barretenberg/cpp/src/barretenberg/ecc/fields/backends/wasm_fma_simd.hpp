@@ -792,8 +792,8 @@ void WasmFmaBackend<Params>::reduce_and_finalize_paired(v128_t* t, field<Params>
         return __builtin_wasm_relaxed_madd_f64x2(va, vb, vc);
     };
 
-    const v128_t sd = wasm_f64x2_splat(0x1p-24); // 2^{-R_LIMB_BITS}
-    const v128_t su = wasm_f64x2_splat(0x1p24);  // 2^{R_LIMB_BITS}
+    const v128_t sd = wasm_f64x2_splat(0x1p-24);     // 2^{-R_LIMB_BITS}
+    const v128_t neg_su = wasm_f64x2_splat(-0x1p24); // -2^{R_LIMB_BITS}, for FMA-based remainder
 
     const v128_t rinv0 = wasm_f64x2_splat(r_limbs.div_r_inv_f[0]);
     const v128_t rinv1 = wasm_f64x2_splat(r_limbs.div_r_inv_f[1]);
@@ -812,7 +812,7 @@ void WasmFmaBackend<Params>::reduce_and_finalize_paired(v128_t* t, field<Params>
 
 #define YUVAL_STEP_V(TI, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)                                                 \
     qi = wasm_f64x2_floor(wasm_f64x2_mul(TI, sd));                                                                     \
-    ki = wasm_f64x2_sub(TI, wasm_f64x2_mul(qi, su));                                                                   \
+    ki = fma_v(qi, neg_su, TI);                                                                                        \
     T1 = fma_v(ki, rinv0, wasm_f64x2_add(T1, qi));                                                                     \
     T2 = fma_v(ki, rinv1, T2);                                                                                         \
     T3 = fma_v(ki, rinv2, T3);                                                                                         \
@@ -854,9 +854,9 @@ void WasmFmaBackend<Params>::reduce_and_finalize_paired(v128_t* t, field<Params>
         const v128_t np0 = wasm_f64x2_splat(NP0_F);
 
         v128_t q10 = wasm_f64x2_floor(wasm_f64x2_mul(t[10], sd));
-        v128_t k_base = wasm_f64x2_sub(t[10], wasm_f64x2_mul(q10, su));
+        v128_t k_base = fma_v(q10, neg_su, t[10]);
         v128_t k_product = wasm_f64x2_mul(k_base, np0);
-        v128_t ks = wasm_f64x2_sub(k_product, wasm_f64x2_mul(wasm_f64x2_floor(wasm_f64x2_mul(k_product, sd)), su));
+        v128_t ks = fma_v(wasm_f64x2_floor(wasm_f64x2_mul(k_product, sd)), neg_su, k_product);
 
         t[10] = fma_v(ks, mod0, t[10]);
         v128_t carry_10 = wasm_f64x2_floor(wasm_f64x2_mul(t[10], sd));
