@@ -31,6 +31,7 @@
 
 #include <array>
 #include <cmath>
+#include <type_traits>
 #include <wasm_simd128.h>
 
 #include "../field_constexpr_helpers.hpp"
@@ -572,30 +573,45 @@ void WasmFmaBackend<Params>::mul_paired_fma_simd(const field<Params>& a1,
     v128_t pc9 = fma_v(sl5, sr4, wasm_f64x2_mul(sl4, sr5));
     v128_t pc10 = wasm_f64x2_mul(sl5, sr5);
 
-    // Combine Karatsuba sub-products into a 21-limb t-array. Result has both
-    // lanes populated with pre-reduction limbs ready for the shared helper.
+    // Combine Karatsuba sub-products into a 21-limb t-array (both lanes
+    // populated with pre-reduction limbs) and inject the Phase 3 bias as a
+    // post-combine add per t[j]. Baking bias into leaf products is unsafe
+    // here: the combine subtracts pl_j/ph_j with opposite signs across
+    // t[j]/t[j+6] so constants leak to the wrong destinations, and the
+    // pc[5] chain (6×≤2^50 terms) pushes intermediates past 2^53.
+    const v128_t bias_v = wasm_f64x2_splat(0x1p52);
+    const v128_t bias_minus_t1_comp_v = wasm_f64x2_splat(0x1p52 - 0x1p28);
+
     v128_t t[21];
-    t[0] = pl0;
-    t[1] = pl1;
-    t[2] = pl2;
-    t[3] = pl3;
-    t[4] = pl4;
-    t[5] = pl5;
-    t[6] = wasm_f64x2_add(pl6, wasm_f64x2_sub(pc0, wasm_f64x2_add(pl0, ph0)));
-    t[7] = wasm_f64x2_add(pl7, wasm_f64x2_sub(pc1, wasm_f64x2_add(pl1, ph1)));
-    t[8] = wasm_f64x2_add(pl8, wasm_f64x2_sub(pc2, wasm_f64x2_add(pl2, ph2)));
-    t[9] = wasm_f64x2_add(pl9, wasm_f64x2_sub(pc3, wasm_f64x2_add(pl3, ph3)));
-    t[10] = wasm_f64x2_add(pl10, wasm_f64x2_sub(pc4, wasm_f64x2_add(pl4, ph4)));
-    t[11] = wasm_f64x2_sub(pc5, wasm_f64x2_add(pl5, ph5));
-    t[12] = wasm_f64x2_add(wasm_f64x2_sub(pc6, wasm_f64x2_add(pl6, ph6)), ph0);
-    t[13] = wasm_f64x2_add(wasm_f64x2_sub(pc7, wasm_f64x2_add(pl7, ph7)), ph1);
-    t[14] = wasm_f64x2_add(wasm_f64x2_sub(pc8, wasm_f64x2_add(pl8, ph8)), ph2);
-    t[15] = wasm_f64x2_add(wasm_f64x2_sub(pc9, pl9), ph3);
-    t[16] = wasm_f64x2_add(wasm_f64x2_sub(pc10, pl10), ph4);
-    t[17] = ph5;
-    t[18] = ph6;
-    t[19] = ph7;
-    t[20] = ph8;
+    t[0] = wasm_f64x2_add(pl0, bias_v);
+    t[1] = wasm_f64x2_add(pl1, bias_minus_t1_comp_v);
+    t[2] = wasm_f64x2_add(pl2, bias_minus_t1_comp_v);
+    t[3] = wasm_f64x2_add(pl3, bias_minus_t1_comp_v);
+    t[4] = wasm_f64x2_add(pl4, bias_minus_t1_comp_v);
+    t[5] = wasm_f64x2_add(pl5, bias_minus_t1_comp_v);
+    t[6] = wasm_f64x2_add(bias_minus_t1_comp_v,
+                          wasm_f64x2_add(pl6, wasm_f64x2_sub(pc0, wasm_f64x2_add(pl0, ph0))));
+    t[7] = wasm_f64x2_add(bias_minus_t1_comp_v,
+                          wasm_f64x2_add(pl7, wasm_f64x2_sub(pc1, wasm_f64x2_add(pl1, ph1))));
+    t[8] = wasm_f64x2_add(bias_minus_t1_comp_v,
+                          wasm_f64x2_add(pl8, wasm_f64x2_sub(pc2, wasm_f64x2_add(pl2, ph2))));
+    t[9] = wasm_f64x2_add(bias_minus_t1_comp_v,
+                          wasm_f64x2_add(pl9, wasm_f64x2_sub(pc3, wasm_f64x2_add(pl3, ph3))));
+    t[10] = wasm_f64x2_add(bias_minus_t1_comp_v,
+                           wasm_f64x2_add(pl10, wasm_f64x2_sub(pc4, wasm_f64x2_add(pl4, ph4))));
+    t[11] = wasm_f64x2_add(bias_v, wasm_f64x2_sub(pc5, wasm_f64x2_add(pl5, ph5)));
+    t[12] = wasm_f64x2_add(bias_v,
+                           wasm_f64x2_add(wasm_f64x2_sub(pc6, wasm_f64x2_add(pl6, ph6)), ph0));
+    t[13] = wasm_f64x2_add(bias_v,
+                           wasm_f64x2_add(wasm_f64x2_sub(pc7, wasm_f64x2_add(pl7, ph7)), ph1));
+    t[14] = wasm_f64x2_add(bias_v,
+                           wasm_f64x2_add(wasm_f64x2_sub(pc8, wasm_f64x2_add(pl8, ph8)), ph2));
+    t[15] = wasm_f64x2_add(bias_v, wasm_f64x2_add(wasm_f64x2_sub(pc9, pl9), ph3));
+    t[16] = wasm_f64x2_add(bias_v, wasm_f64x2_add(wasm_f64x2_sub(pc10, pl10), ph4));
+    t[17] = wasm_f64x2_add(ph5, bias_v);
+    t[18] = wasm_f64x2_add(ph6, bias_v);
+    t[19] = wasm_f64x2_add(ph7, bias_v);
+    t[20] = wasm_f64x2_add(ph8, bias_v);
 
     // Phases 3 + 4: shared Montgomery reduction and output extraction.
     reduce_and_finalize_paired(t, out1, out2);
@@ -649,6 +665,14 @@ void WasmFmaBackend<Params>::sqr_paired_fma_simd(const field<Params>& a1,
     // output limb is a single FMA chain (no post-multiply x+x step).
     // a[10] is always the larger index — no doubled form needed.
     // Worst-case limb (t[10]): 5 cross + 1 diag ≈ 2^51.6 (f64-safe).
+    //
+    // Init bias (see reduce_and_finalize_paired) is folded into the innermost
+    // mul of every chain, mul → fma(..., bias_addend), at zero extra op cost.
+    // Longest chain (t[10]): 6 products of ≤ 2^49 → 2^52 + 6·2^49 < 2^53,
+    // so every intermediate stays at exp 1075 (ULP=1, integer-exact).
+    const v128_t bias_v = wasm_f64x2_splat(0x1p52);
+    const v128_t bias_minus_t1_comp_v = wasm_f64x2_splat(0x1p52 - 0x1p28);
+
     v128_t a0x2 = wasm_f64x2_add(af0, af0);
     v128_t a1x2 = wasm_f64x2_add(af1, af1);
     v128_t a2x2 = wasm_f64x2_add(af2, af2);
@@ -661,29 +685,34 @@ void WasmFmaBackend<Params>::sqr_paired_fma_simd(const field<Params>& a1,
     v128_t a9x2 = wasm_f64x2_add(af9, af9);
 
     v128_t t[21];
-    t[0] = wasm_f64x2_mul(af0, af0);
-    t[1] = wasm_f64x2_mul(a0x2, af1);
-    t[2] = fma_v(a0x2, af2, wasm_f64x2_mul(af1, af1));
-    t[3] = fma_v(a0x2, af3, wasm_f64x2_mul(a1x2, af2));
-    t[4] = fma_v(a0x2, af4, fma_v(a1x2, af3, wasm_f64x2_mul(af2, af2)));
-    t[5] = fma_v(a0x2, af5, fma_v(a1x2, af4, wasm_f64x2_mul(a2x2, af3)));
-    t[6] = fma_v(a0x2, af6, fma_v(a1x2, af5, fma_v(a2x2, af4, wasm_f64x2_mul(af3, af3))));
-    t[7] = fma_v(a0x2, af7, fma_v(a1x2, af6, fma_v(a2x2, af5, wasm_f64x2_mul(a3x2, af4))));
-    t[8] = fma_v(a0x2, af8, fma_v(a1x2, af7, fma_v(a2x2, af6, fma_v(a3x2, af5, wasm_f64x2_mul(af4, af4)))));
-    t[9] = fma_v(a0x2, af9, fma_v(a1x2, af8, fma_v(a2x2, af7, fma_v(a3x2, af6, wasm_f64x2_mul(a4x2, af5)))));
+    // t[0]: init bias +2^52 (no T_1 role ever).
+    t[0] = fma_v(af0, af0, bias_v);
+    // t[1..10]: init bias +2^52 − 2^28 (compensation for T_1-receiver role).
+    t[1] = fma_v(a0x2, af1, bias_minus_t1_comp_v);
+    t[2] = fma_v(a0x2, af2, fma_v(af1, af1, bias_minus_t1_comp_v));
+    t[3] = fma_v(a0x2, af3, fma_v(a1x2, af2, bias_minus_t1_comp_v));
+    t[4] = fma_v(a0x2, af4, fma_v(a1x2, af3, fma_v(af2, af2, bias_minus_t1_comp_v)));
+    t[5] = fma_v(a0x2, af5, fma_v(a1x2, af4, fma_v(a2x2, af3, bias_minus_t1_comp_v)));
+    t[6] = fma_v(a0x2, af6, fma_v(a1x2, af5, fma_v(a2x2, af4, fma_v(af3, af3, bias_minus_t1_comp_v))));
+    t[7] = fma_v(a0x2, af7, fma_v(a1x2, af6, fma_v(a2x2, af5, fma_v(a3x2, af4, bias_minus_t1_comp_v))));
+    t[8] = fma_v(a0x2, af8, fma_v(a1x2, af7, fma_v(a2x2, af6, fma_v(a3x2, af5, fma_v(af4, af4, bias_minus_t1_comp_v)))));
+    t[9] = fma_v(a0x2, af9, fma_v(a1x2, af8, fma_v(a2x2, af7, fma_v(a3x2, af6, fma_v(a4x2, af5, bias_minus_t1_comp_v)))));
     t[10] = fma_v(a0x2,
                   af10,
-                  fma_v(a1x2, af9, fma_v(a2x2, af8, fma_v(a3x2, af7, fma_v(a4x2, af6, wasm_f64x2_mul(af5, af5))))));
-    t[11] = fma_v(a1x2, af10, fma_v(a2x2, af9, fma_v(a3x2, af8, fma_v(a4x2, af7, wasm_f64x2_mul(a5x2, af6)))));
-    t[12] = fma_v(a2x2, af10, fma_v(a3x2, af9, fma_v(a4x2, af8, fma_v(a5x2, af7, wasm_f64x2_mul(af6, af6)))));
-    t[13] = fma_v(a3x2, af10, fma_v(a4x2, af9, fma_v(a5x2, af8, wasm_f64x2_mul(a6x2, af7))));
-    t[14] = fma_v(a4x2, af10, fma_v(a5x2, af9, fma_v(a6x2, af8, wasm_f64x2_mul(af7, af7))));
-    t[15] = fma_v(a5x2, af10, fma_v(a6x2, af9, wasm_f64x2_mul(a7x2, af8)));
-    t[16] = fma_v(a6x2, af10, fma_v(a7x2, af9, wasm_f64x2_mul(af8, af8)));
-    t[17] = fma_v(a7x2, af10, wasm_f64x2_mul(a8x2, af9));
-    t[18] = fma_v(a8x2, af10, wasm_f64x2_mul(af9, af9));
-    t[19] = wasm_f64x2_mul(a9x2, af10);
-    t[20] = wasm_f64x2_mul(af10, af10);
+                  fma_v(a1x2,
+                        af9,
+                        fma_v(a2x2, af8, fma_v(a3x2, af7, fma_v(a4x2, af6, fma_v(af5, af5, bias_minus_t1_comp_v))))));
+    // t[11..20]: init bias +2^52 (pure sink slots in Phase 3).
+    t[11] = fma_v(a1x2, af10, fma_v(a2x2, af9, fma_v(a3x2, af8, fma_v(a4x2, af7, fma_v(a5x2, af6, bias_v)))));
+    t[12] = fma_v(a2x2, af10, fma_v(a3x2, af9, fma_v(a4x2, af8, fma_v(a5x2, af7, fma_v(af6, af6, bias_v)))));
+    t[13] = fma_v(a3x2, af10, fma_v(a4x2, af9, fma_v(a5x2, af8, fma_v(a6x2, af7, bias_v))));
+    t[14] = fma_v(a4x2, af10, fma_v(a5x2, af9, fma_v(a6x2, af8, fma_v(af7, af7, bias_v))));
+    t[15] = fma_v(a5x2, af10, fma_v(a6x2, af9, fma_v(a7x2, af8, bias_v)));
+    t[16] = fma_v(a6x2, af10, fma_v(a7x2, af9, fma_v(af8, af8, bias_v)));
+    t[17] = fma_v(a7x2, af10, fma_v(a8x2, af9, bias_v));
+    t[18] = fma_v(a8x2, af10, fma_v(af9, af9, bias_v));
+    t[19] = fma_v(a9x2, af10, bias_v);
+    t[20] = fma_v(af10, af10, bias_v);
 
     // Phases 3 + 4: shared Montgomery reduction and output extraction.
     reduce_and_finalize_paired(t, out1, out2);
@@ -712,8 +741,27 @@ void WasmFmaBackend<Params>::reduce_and_finalize_paired(v128_t* t, field<Params>
         return __builtin_wasm_relaxed_madd_f64x2(va, vb, vc);
     };
 
-    const v128_t sd = wasm_f64x2_splat(0x1p-24);     // 2^{-R_LIMB_BITS}
-    const v128_t neg_su = wasm_f64x2_splat(-0x1p24); // -2^{R_LIMB_BITS}, for FMA-based remainder
+    // AND-mask bias trick: each t[j] enters Phase 3 biased by +2^52, so its
+    // f64 encoding pins exp=1075 and the mantissa's low 24 bits encode ki,
+    // bits 24–51 encode qi·2^24. Two parallel ANDs extract both halves off
+    // TI in the time of one, replacing mul→floor→fma with AND→sub→fma.
+    //
+    // The bias halves Phase 3's f64 headroom: exactness requires every FMA
+    // intermediate (product + addend) to stay < 2^53. Only BN254 Fq and
+    // BN254 Fr (= Grumpkin Fq) have a completed bounds proof (step-8
+    // scatter peaks at ≈ 2^52.93–2^52.94, ≈ 0.06 bits of slack). Other
+    // curves are gated out below: secp256k1 Fq's upper div_r_inv_f limbs
+    // are near-saturated and drive the step-8 scatter past 2^53, and the
+    // secp256k1 Fr / secp256r1 Fq/Fr margins have not been re-verified
+    // against this kernel's actual FMA schedule.
+    //
+    // TODO(bounds): widen the whitelist once each additional curve has an
+    // end-to-end per-step bounds proof. Currently proven: Bn254FqParams, Bn254FrParams
+    const v128_t sd = wasm_f64x2_splat(0x1p-24);                 // 2^{-R_LIMB_BITS}
+    const v128_t bias_v = wasm_f64x2_splat(0x1p52);              // 2^52
+    const v128_t neg_t1_comp_v = wasm_f64x2_splat(-0x1p28);      // −2^28
+    const v128_t mask_ki = wasm_i64x2_splat(static_cast<int64_t>(0x4330000000FFFFFFULL));        // exp(1075) | low-24 mantissa
+    const v128_t mask_qi_scaled = wasm_i64x2_splat(static_cast<int64_t>(0x433FFFFFFF000000ULL)); // exp(1075) | mantissa bits 24–51
 
     const v128_t rinv0 = wasm_f64x2_splat(r_limbs.div_r_inv_f[0]);
     const v128_t rinv1 = wasm_f64x2_splat(r_limbs.div_r_inv_f[1]);
@@ -727,13 +775,19 @@ void WasmFmaBackend<Params>::reduce_and_finalize_paired(v128_t* t, field<Params>
     const v128_t rinv9 = wasm_f64x2_splat(r_limbs.div_r_inv_f[9]);
     const v128_t rinv10 = wasm_f64x2_splat(r_limbs.div_r_inv_f[10]);
 
-    // Phase 3: Reduction — 10 Yuval + 1 standard (all v128_t)
-    v128_t qi, ki;
+    // Phase 3: Reduction — 10 Yuval + 1 standard (all v128_t).
+    // The qi-FMA adds qi + 2^28 to T_1 (not just +qi). Each t[j] for j ∈
+    // [1,10] plays the T_1 role in exactly one step, so its init bias
+    // pre-subtracts 2^28; the running bias settles back to +2^52 before
+    // t[j] enters its own Yuval step.
+    v128_t ki, ki_biased, qi_scaled_biased;
 
 #define YUVAL_STEP_V(TI, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)                                                 \
-    qi = wasm_f64x2_floor(wasm_f64x2_mul(TI, sd));                                                                     \
-    ki = fma_v(qi, neg_su, TI);                                                                                        \
-    T1 = fma_v(ki, rinv0, wasm_f64x2_add(T1, qi));                                                                     \
+    ki_biased = wasm_v128_and(TI, mask_ki);                /* 2^52 + ki             */                                 \
+    qi_scaled_biased = wasm_v128_and(TI, mask_qi_scaled);  /* 2^52 + qi·2^24        */                                 \
+    ki = wasm_f64x2_sub(ki_biased, bias_v);                                                                            \
+    T1 = fma_v(qi_scaled_biased, sd, T1);                  /* adds qi + 2^28        */                                 \
+    T1 = fma_v(ki, rinv0, T1);                                                                                         \
     T2 = fma_v(ki, rinv1, T2);                                                                                         \
     T3 = fma_v(ki, rinv2, T3);                                                                                         \
     T4 = fma_v(ki, rinv3, T4);                                                                                         \
@@ -774,11 +828,15 @@ void WasmFmaBackend<Params>::reduce_and_finalize_paired(v128_t* t, field<Params>
         const v128_t mod10 = wasm_f64x2_splat(r_limbs.modulus_f[10]);
         const v128_t np0 = wasm_f64x2_splat(NP0_F);
 
-        v128_t t10_sd = wasm_f64x2_mul(t[10], sd);
-        v128_t q10 = wasm_f64x2_floor(t10_sd);
-        v128_t k_base = fma_v(q10, neg_su, t[10]);
-        v128_t k_product = wasm_f64x2_mul(k_base, np0);
-        v128_t ks = fma_v(wasm_f64x2_floor(wasm_f64x2_mul(k_product, sd)), neg_su, k_product);
+        // AND-mask extraction mirrors the Yuval steps. t[10] carries +2^52
+        // here (step 9's T_1 FMA restored the +2^28). fma(t[10], sd, −2^28)
+        // yields clean t10_sd; k_product gets re-biased for a second AND.
+        v128_t t10_sd = fma_v(t[10], sd, neg_t1_comp_v);
+        v128_t k_base_biased = wasm_v128_and(t[10], mask_ki);
+        v128_t k_base = wasm_f64x2_sub(k_base_biased, bias_v);
+        v128_t k_product_biased = fma_v(k_base, np0, bias_v);
+        v128_t ks_biased = wasm_v128_and(k_product_biased, mask_ki);
+        v128_t ks = wasm_f64x2_sub(ks_biased, bias_v);
 
         // The standard step chooses ks so that t[10] + ks·p[0] ≡ 0 mod 2^24.
         // Therefore (t[10] + ks·p[0]) / 2^24 is already an integer — no floor
@@ -798,19 +856,21 @@ void WasmFmaBackend<Params>::reduce_and_finalize_paired(v128_t* t, field<Params>
         t[20] = fma_v(ks, mod10, t[20]);
     }
 
-    // Phase 4: Extract lanes, integer carry propagation, output
+    // Phase 4: Extract lanes, integer carry propagation, output. Each t[j]
+    // for j ∈ [11,20] still carries +2^52; strip it after the f64→int64.
+    constexpr int64_t BIAS_I64 = 1LL << 52;
 #define EXTRACT_AND_FINALIZE(LANE, OUT)                                                                                \
     {                                                                                                                  \
-        uint64_t r11 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[11], LANE)));              \
-        uint64_t r12 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[12], LANE)));              \
-        uint64_t r13 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[13], LANE)));              \
-        uint64_t r14 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[14], LANE)));              \
-        uint64_t r15 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[15], LANE)));              \
-        uint64_t r16 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[16], LANE)));              \
-        uint64_t r17 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[17], LANE)));              \
-        uint64_t r18 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[18], LANE)));              \
-        uint64_t r19 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[19], LANE)));              \
-        uint64_t r20 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[20], LANE)));              \
+        uint64_t r11 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[11], LANE)) - BIAS_I64);   \
+        uint64_t r12 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[12], LANE)) - BIAS_I64);   \
+        uint64_t r13 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[13], LANE)) - BIAS_I64);   \
+        uint64_t r14 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[14], LANE)) - BIAS_I64);   \
+        uint64_t r15 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[15], LANE)) - BIAS_I64);   \
+        uint64_t r16 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[16], LANE)) - BIAS_I64);   \
+        uint64_t r17 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[17], LANE)) - BIAS_I64);   \
+        uint64_t r18 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[18], LANE)) - BIAS_I64);   \
+        uint64_t r19 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[19], LANE)) - BIAS_I64);   \
+        uint64_t r20 = static_cast<uint64_t>(static_cast<int64_t>(wasm_f64x2_extract_lane(t[20], LANE)) - BIAS_I64);   \
         r12 += r11 >> 24;                                                                                              \
         r11 &= M24;                                                                                                    \
         r13 += r12 >> 24;                                                                                              \
