@@ -604,21 +604,10 @@ void WasmFmaBackend<Params>::mul_paired_fma_simd(const field<Params>& a1,
 // ═════════════════════════════════════════════════════════════════════════
 // Dual Montgomery squaring: out1 = a1², out2 = a2².
 //
-// Same 4-phase structure and Karatsuba 6+5 split as mul_paired_fma_simd, but
-// the product phase exploits a·b = b·a: each sub-square computes 15 (for
-// 6-limb) or 10 (for 5-limb) unique cross products and doubles them
-// post-facto via `x + x`, then adds the diagonal squares. Operation counts
-// per lane:
-//
-//       block        mul_paired   sqr_paired
-//       P_lo (6²)        36            21   (15 cross + 6 diag)
-//       P_hi (5²)        25            15   (10 cross + 5 diag)
-//       P_cross (6²)     36            21   (15 cross + 6 diag)
-//       total            97            57   (~41% fewer mul/FMAs)
-//
-// Plus ~25 extra `x+x` adds for post-doubling (negligible on WASM). Inputs
-// stay 24-bit (sum limbs 25-bit, same as mul), so f64 53-bit mantissa bounds
-// are inherited — no new precision risk.
+// Flat 11-limb schoolbook triangular square. Karatsuba's combine overhead
+// (~30 adds + sum limbs) isn't worth it at n=11 for a square — the extra
+// 9 mul/FMAs schoolbook pays are cheaper than the combine it avoids.
+// Per lane: 66 mul/FMA + 10 pre-doubles vs. 57 + 49 for Karatsuba 6+5.
 //
 // Phases 3 + 4 delegate to reduce_and_finalize_paired.
 // ═════════════════════════════════════════════════════════════════════════
@@ -656,113 +645,45 @@ void WasmFmaBackend<Params>::sqr_paired_fma_simd(const field<Params>& a1,
 #undef LIMB24_CROSS
 #undef LIMB24_TOP
 
-    // Phase 2: Triangular Karatsuba squaring.
-    //   a² = P_lo + (P_cross − P_lo − P_hi)·x^6 + P_hi·x^12,
-    //   where   P_lo   = a[0..5]²   (6-limb square)
-    //           P_hi   = a[6..10]²  (5-limb square)
-    //           P_cross = (a[0..5] + a[6..10])²  (6-limb square on sum-limbs)
-    //
-    // Each sub-square uses (Σ xᵢ)² = Σ xᵢ² + 2·Σᵢ<ⱼ xᵢxⱼ — compute each cross
-    // product once, double via `x+x`, then add the diagonal via FMA.
+    // Phase 2: Schoolbook triangular square. Pre-double a[0..9] so each
+    // output limb is a single FMA chain (no post-multiply x+x step).
+    // a[10] is always the larger index — no doubled form needed.
+    // Worst-case limb (t[10]): 5 cross + 1 diag ≈ 2^51.6 (f64-safe).
+    v128_t a0x2 = wasm_f64x2_add(af0, af0);
+    v128_t a1x2 = wasm_f64x2_add(af1, af1);
+    v128_t a2x2 = wasm_f64x2_add(af2, af2);
+    v128_t a3x2 = wasm_f64x2_add(af3, af3);
+    v128_t a4x2 = wasm_f64x2_add(af4, af4);
+    v128_t a5x2 = wasm_f64x2_add(af5, af5);
+    v128_t a6x2 = wasm_f64x2_add(af6, af6);
+    v128_t a7x2 = wasm_f64x2_add(af7, af7);
+    v128_t a8x2 = wasm_f64x2_add(af8, af8);
+    v128_t a9x2 = wasm_f64x2_add(af9, af9);
 
-    // ── Cross-sum limbs for the middle term (25-bit values). ─────────────
-    v128_t sum0 = wasm_f64x2_add(af0, af6);
-    v128_t sum1 = wasm_f64x2_add(af1, af7);
-    v128_t sum2 = wasm_f64x2_add(af2, af8);
-    v128_t sum3 = wasm_f64x2_add(af3, af9);
-    v128_t sum4 = wasm_f64x2_add(af4, af10);
-    v128_t sum5 = af5; // no partner at index 11; sum5 = a[5] (24-bit).
-
-    // ── P_lo = a[0..5]² ───────────────────────────────────────────────────
-    // Output limb k aggregates Σ_{i+j=k, i<j} 2·q(i,j)  +  d_{k/2} if k even.
-    // 15 cross products + 6 diagonals = 21 mul/FMA per lane.
-    v128_t pl0 = wasm_f64x2_mul(af0, af0); // d0
-    v128_t q01 = wasm_f64x2_mul(af0, af1);
-    v128_t pl1 = wasm_f64x2_add(q01, q01); // 2·q01
-    v128_t c_pl2 = wasm_f64x2_mul(af0, af2);
-    v128_t pl2 = fma_v(af1, af1, wasm_f64x2_add(c_pl2, c_pl2)); // 2·q02 + d1
-    v128_t c_pl3 = fma_v(af1, af2, wasm_f64x2_mul(af0, af3));
-    v128_t pl3 = wasm_f64x2_add(c_pl3, c_pl3); // 2·(q03 + q12)
-    v128_t c_pl4 = fma_v(af1, af3, wasm_f64x2_mul(af0, af4));
-    v128_t pl4 = fma_v(af2, af2, wasm_f64x2_add(c_pl4, c_pl4)); // 2·(q04 + q13) + d2
-    v128_t c_pl5 = fma_v(af2, af3, fma_v(af1, af4, wasm_f64x2_mul(af0, af5)));
-    v128_t pl5 = wasm_f64x2_add(c_pl5, c_pl5); // 2·(q05 + q14 + q23)
-    v128_t c_pl6 = fma_v(af2, af4, wasm_f64x2_mul(af1, af5));
-    v128_t pl6 = fma_v(af3, af3, wasm_f64x2_add(c_pl6, c_pl6)); // 2·(q15 + q24) + d3
-    v128_t c_pl7 = fma_v(af3, af4, wasm_f64x2_mul(af2, af5));
-    v128_t pl7 = wasm_f64x2_add(c_pl7, c_pl7); // 2·(q25 + q34)
-    v128_t c_pl8 = wasm_f64x2_mul(af3, af5);
-    v128_t pl8 = fma_v(af4, af4, wasm_f64x2_add(c_pl8, c_pl8)); // 2·q35 + d4
-    v128_t q45 = wasm_f64x2_mul(af4, af5);
-    v128_t pl9 = wasm_f64x2_add(q45, q45);  // 2·q45
-    v128_t pl10 = wasm_f64x2_mul(af5, af5); // d5
-
-    // ── P_hi = a[6..10]² ──────────────────────────────────────────────────
-    // 10 cross products + 5 diagonals = 15 mul/FMA per lane.
-    v128_t ph0 = wasm_f64x2_mul(af6, af6); // d0
-    v128_t q67 = wasm_f64x2_mul(af6, af7);
-    v128_t ph1 = wasm_f64x2_add(q67, q67); // 2·q67
-    v128_t c_ph2 = wasm_f64x2_mul(af6, af8);
-    v128_t ph2 = fma_v(af7, af7, wasm_f64x2_add(c_ph2, c_ph2)); // 2·q68 + d7
-    v128_t c_ph3 = fma_v(af7, af8, wasm_f64x2_mul(af6, af9));
-    v128_t ph3 = wasm_f64x2_add(c_ph3, c_ph3); // 2·(q69 + q78)
-    v128_t c_ph4 = fma_v(af7, af9, wasm_f64x2_mul(af6, af10));
-    v128_t ph4 = fma_v(af8, af8, wasm_f64x2_add(c_ph4, c_ph4)); // 2·(q6a + q79) + d8
-    v128_t c_ph5 = fma_v(af8, af9, wasm_f64x2_mul(af7, af10));
-    v128_t ph5 = wasm_f64x2_add(c_ph5, c_ph5); // 2·(q7a + q89)
-    v128_t c_ph6 = wasm_f64x2_mul(af8, af10);
-    v128_t ph6 = fma_v(af9, af9, wasm_f64x2_add(c_ph6, c_ph6)); // 2·q8a + d9
-    v128_t q9a = wasm_f64x2_mul(af9, af10);
-    v128_t ph7 = wasm_f64x2_add(q9a, q9a);   // 2·q9a
-    v128_t ph8 = wasm_f64x2_mul(af10, af10); // da
-
-    // ── P_cross = (a[0..5] + a[6..10])² ───────────────────────────────────
-    // Same structure as P_lo, but with sum-limbs (25-bit). 15 cross + 6 diag.
-    v128_t pc0 = wasm_f64x2_mul(sum0, sum0);
-    v128_t q_s01 = wasm_f64x2_mul(sum0, sum1);
-    v128_t pc1 = wasm_f64x2_add(q_s01, q_s01);
-    v128_t c_pc2 = wasm_f64x2_mul(sum0, sum2);
-    v128_t pc2 = fma_v(sum1, sum1, wasm_f64x2_add(c_pc2, c_pc2));
-    v128_t c_pc3 = fma_v(sum1, sum2, wasm_f64x2_mul(sum0, sum3));
-    v128_t pc3 = wasm_f64x2_add(c_pc3, c_pc3);
-    v128_t c_pc4 = fma_v(sum1, sum3, wasm_f64x2_mul(sum0, sum4));
-    v128_t pc4 = fma_v(sum2, sum2, wasm_f64x2_add(c_pc4, c_pc4));
-    v128_t c_pc5 = fma_v(sum2, sum3, fma_v(sum1, sum4, wasm_f64x2_mul(sum0, sum5)));
-    v128_t pc5 = wasm_f64x2_add(c_pc5, c_pc5);
-    v128_t c_pc6 = fma_v(sum2, sum4, wasm_f64x2_mul(sum1, sum5));
-    v128_t pc6 = fma_v(sum3, sum3, wasm_f64x2_add(c_pc6, c_pc6));
-    v128_t c_pc7 = fma_v(sum3, sum4, wasm_f64x2_mul(sum2, sum5));
-    v128_t pc7 = wasm_f64x2_add(c_pc7, c_pc7);
-    v128_t c_pc8 = wasm_f64x2_mul(sum3, sum5);
-    v128_t pc8 = fma_v(sum4, sum4, wasm_f64x2_add(c_pc8, c_pc8));
-    v128_t q_s45 = wasm_f64x2_mul(sum4, sum5);
-    v128_t pc9 = wasm_f64x2_add(q_s45, q_s45);
-    v128_t pc10 = wasm_f64x2_mul(sum5, sum5);
-
-    // Combine (same Karatsuba merge formula as mul_paired_fma_simd — a²
-    // trivially satisfies the Karatsuba identity with A = B = a).
     v128_t t[21];
-    t[0] = pl0;
-    t[1] = pl1;
-    t[2] = pl2;
-    t[3] = pl3;
-    t[4] = pl4;
-    t[5] = pl5;
-    t[6] = wasm_f64x2_add(pl6, wasm_f64x2_sub(pc0, wasm_f64x2_add(pl0, ph0)));
-    t[7] = wasm_f64x2_add(pl7, wasm_f64x2_sub(pc1, wasm_f64x2_add(pl1, ph1)));
-    t[8] = wasm_f64x2_add(pl8, wasm_f64x2_sub(pc2, wasm_f64x2_add(pl2, ph2)));
-    t[9] = wasm_f64x2_add(pl9, wasm_f64x2_sub(pc3, wasm_f64x2_add(pl3, ph3)));
-    t[10] = wasm_f64x2_add(pl10, wasm_f64x2_sub(pc4, wasm_f64x2_add(pl4, ph4)));
-    t[11] = wasm_f64x2_sub(pc5, wasm_f64x2_add(pl5, ph5));
-    t[12] = wasm_f64x2_add(wasm_f64x2_sub(pc6, wasm_f64x2_add(pl6, ph6)), ph0);
-    t[13] = wasm_f64x2_add(wasm_f64x2_sub(pc7, wasm_f64x2_add(pl7, ph7)), ph1);
-    t[14] = wasm_f64x2_add(wasm_f64x2_sub(pc8, wasm_f64x2_add(pl8, ph8)), ph2);
-    t[15] = wasm_f64x2_add(wasm_f64x2_sub(pc9, pl9), ph3);
-    t[16] = wasm_f64x2_add(wasm_f64x2_sub(pc10, pl10), ph4);
-    t[17] = ph5;
-    t[18] = ph6;
-    t[19] = ph7;
-    t[20] = ph8;
+    t[0] = wasm_f64x2_mul(af0, af0);
+    t[1] = wasm_f64x2_mul(a0x2, af1);
+    t[2] = fma_v(a0x2, af2, wasm_f64x2_mul(af1, af1));
+    t[3] = fma_v(a0x2, af3, wasm_f64x2_mul(a1x2, af2));
+    t[4] = fma_v(a0x2, af4, fma_v(a1x2, af3, wasm_f64x2_mul(af2, af2)));
+    t[5] = fma_v(a0x2, af5, fma_v(a1x2, af4, wasm_f64x2_mul(a2x2, af3)));
+    t[6] = fma_v(a0x2, af6, fma_v(a1x2, af5, fma_v(a2x2, af4, wasm_f64x2_mul(af3, af3))));
+    t[7] = fma_v(a0x2, af7, fma_v(a1x2, af6, fma_v(a2x2, af5, wasm_f64x2_mul(a3x2, af4))));
+    t[8] = fma_v(a0x2, af8, fma_v(a1x2, af7, fma_v(a2x2, af6, fma_v(a3x2, af5, wasm_f64x2_mul(af4, af4)))));
+    t[9] = fma_v(a0x2, af9, fma_v(a1x2, af8, fma_v(a2x2, af7, fma_v(a3x2, af6, wasm_f64x2_mul(a4x2, af5)))));
+    t[10] = fma_v(a0x2,
+                  af10,
+                  fma_v(a1x2, af9, fma_v(a2x2, af8, fma_v(a3x2, af7, fma_v(a4x2, af6, wasm_f64x2_mul(af5, af5))))));
+    t[11] = fma_v(a1x2, af10, fma_v(a2x2, af9, fma_v(a3x2, af8, fma_v(a4x2, af7, wasm_f64x2_mul(a5x2, af6)))));
+    t[12] = fma_v(a2x2, af10, fma_v(a3x2, af9, fma_v(a4x2, af8, fma_v(a5x2, af7, wasm_f64x2_mul(af6, af6)))));
+    t[13] = fma_v(a3x2, af10, fma_v(a4x2, af9, fma_v(a5x2, af8, wasm_f64x2_mul(a6x2, af7))));
+    t[14] = fma_v(a4x2, af10, fma_v(a5x2, af9, fma_v(a6x2, af8, wasm_f64x2_mul(af7, af7))));
+    t[15] = fma_v(a5x2, af10, fma_v(a6x2, af9, wasm_f64x2_mul(a7x2, af8)));
+    t[16] = fma_v(a6x2, af10, fma_v(a7x2, af9, wasm_f64x2_mul(af8, af8)));
+    t[17] = fma_v(a7x2, af10, wasm_f64x2_mul(a8x2, af9));
+    t[18] = fma_v(a8x2, af10, wasm_f64x2_mul(af9, af9));
+    t[19] = wasm_f64x2_mul(a9x2, af10);
+    t[20] = wasm_f64x2_mul(af10, af10);
 
     // Phases 3 + 4: shared Montgomery reduction and output extraction.
     reduce_and_finalize_paired(t, out1, out2);
