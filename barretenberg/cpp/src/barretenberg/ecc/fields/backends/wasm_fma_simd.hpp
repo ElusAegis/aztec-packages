@@ -401,8 +401,7 @@ field<Params> WasmFmaBackend<Params>::mul_fma_simd(const field<Params>& lhs, con
         double k_product = k_base * NP0_F;
         double k_std = k_product - std::floor(k_product * SD) * SU;
 
-        t10 = fma_s(k_std, r_limbs.modulus_f[0], t10);
-        double carry_10 = std::floor(t10 * SD);
+        double carry_10 = fma_s(k_std, r_limbs.modulus_f[0] * SD, t10 * SD);
 
         ks = wasm_f64x2_splat(k_std);
         t11 = fma_s(k_std, r_limbs.modulus_f[1], t11 + carry_10);
@@ -840,7 +839,8 @@ void WasmFmaBackend<Params>::reduce_and_finalize_paired(v128_t* t, field<Params>
 
     // Standard step 10
     {
-        const v128_t mod0 = wasm_f64x2_splat(r_limbs.modulus_f[0]);
+        // mod0 is only needed in scaled form (mod0_sd) for the carry computation.
+        const v128_t mod0_sd = wasm_f64x2_splat(r_limbs.modulus_f[0] * 0x1p-24);
         const v128_t mod1 = wasm_f64x2_splat(r_limbs.modulus_f[1]);
         const v128_t mod2 = wasm_f64x2_splat(r_limbs.modulus_f[2]);
         const v128_t mod3 = wasm_f64x2_splat(r_limbs.modulus_f[3]);
@@ -853,13 +853,18 @@ void WasmFmaBackend<Params>::reduce_and_finalize_paired(v128_t* t, field<Params>
         const v128_t mod10 = wasm_f64x2_splat(r_limbs.modulus_f[10]);
         const v128_t np0 = wasm_f64x2_splat(NP0_F);
 
-        v128_t q10 = wasm_f64x2_floor(wasm_f64x2_mul(t[10], sd));
+        v128_t t10_sd = wasm_f64x2_mul(t[10], sd);
+        v128_t q10 = wasm_f64x2_floor(t10_sd);
         v128_t k_base = fma_v(q10, neg_su, t[10]);
         v128_t k_product = wasm_f64x2_mul(k_base, np0);
         v128_t ks = fma_v(wasm_f64x2_floor(wasm_f64x2_mul(k_product, sd)), neg_su, k_product);
 
-        t[10] = fma_v(ks, mod0, t[10]);
-        v128_t carry_10 = wasm_f64x2_floor(wasm_f64x2_mul(t[10], sd));
+        // The standard step chooses ks so that t[10] + ks·p[0] ≡ 0 mod 2^24.
+        // Therefore (t[10] + ks·p[0]) / 2^24 is already an integer — no floor
+        // needed. And t[10] itself is dead after this (Phase 4 starts at t[11]),
+        // so we compute the carry directly without updating t[10]:
+        //   carry = t[10]/2^24 + ks · (p[0]/2^24) = fma(ks, mod0_sd, t10_sd)
+        v128_t carry_10 = fma_v(ks, mod0_sd, t10_sd);
         t[11] = fma_v(ks, mod1, wasm_f64x2_add(t[11], carry_10));
         t[12] = fma_v(ks, mod2, t[12]);
         t[13] = fma_v(ks, mod3, t[13]);
