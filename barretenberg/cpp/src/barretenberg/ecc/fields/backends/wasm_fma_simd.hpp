@@ -92,7 +92,14 @@ template <class Params> struct WasmFmaBackend {
     // Routing:
     //   N=1  → single-lane mul (SIMD within the kernel).
     //   N=2  → mul_paired_fma_simd — 2 SIMD lanes, 1 kernel call.
-    //   N≥3  → mul_paired_fma_simd for slots [0,1] + single mul() for [2..N).
+    //   N=3  → noinline helper that force-inlines both mul_paired_fma_simd
+    //          and mul_int24 into one function body. LLVM can then
+    //          interleave the i64 ops with f64 FMA ops. The noinline
+    //          boundary keeps the fat body out of every caller.
+    //   N=5  → noinline helper with 2 paired FMAs + 1 int24, all inlined.
+    //          Integer sandwiched between the two FMA calls so it can hide
+    //          behind the combined FMA latency.
+    //   N≥4 (except 5) → paired FMA for [0,1] + single mul() for [2..N).
     template <size_t N>
     BB_INLINE static constexpr void mul_batched(std::array<const field<Params>*, N> as,
                                                 std::array<const field<Params>*, N> bs,
@@ -108,6 +115,14 @@ template <class Params> struct WasmFmaBackend {
             return;
         } else if constexpr (N == 1) {
             *outs[0] = mul_via_paired_fma_simd(*as[0], *bs[0]);
+        } else if constexpr (N == 3) {
+            mul_triple_noinline(*as[0], *bs[0], *as[1], *bs[1], *as[2], *bs[2],
+                                *outs[0], *outs[1], *outs[2]);
+        } else if constexpr (N == 5) {
+            mul_quint_noinline(*as[0], *bs[0], *as[1], *bs[1],
+                               *as[2], *bs[2],
+                               *as[3], *bs[3], *as[4], *bs[4],
+                               *outs[0], *outs[1], *outs[2], *outs[3], *outs[4]);
         } else {
             mul_paired_fma_simd(*as[0], *bs[0], *as[1], *bs[1], *outs[0], *outs[1]);
             for (size_t i = 2; i < N; ++i) {
@@ -118,8 +133,9 @@ template <class Params> struct WasmFmaBackend {
 
     // Batched Montgomery sqr: outs[i] = as[i]^2 for i in [0, N).
     //
-    // N=2 uses the triangular-product paired kernel (~41% fewer mul/FMAs per
-    // lane than mul_paired thanks to a·b = b·a symmetry).
+    // N=2 uses the triangular-product paired kernel.
+    // N=3 delegates to a noinline helper with both kernels force-inlined.
+    // N=5 delegates to a noinline helper with 2 paired sqrs + 1 int24 sqr.
     template <size_t N>
     BB_INLINE static constexpr void sqr_batched(std::array<const field<Params>*, N> as,
                                                 std::array<field<Params>*, N> outs) noexcept
@@ -135,6 +151,11 @@ template <class Params> struct WasmFmaBackend {
         } else if constexpr (N == 1) {
             field<Params> scratch;
             sqr_paired_fma_simd(*as[0], *as[0], *outs[0], scratch);
+        } else if constexpr (N == 3) {
+            sqr_triple_noinline(*as[0], *as[1], *as[2], *outs[0], *outs[1], *outs[2]);
+        } else if constexpr (N == 5) {
+            sqr_quint_noinline(*as[0], *as[1], *as[2], *as[3], *as[4],
+                               *outs[0], *outs[1], *outs[2], *outs[3], *outs[4]);
         } else {
             sqr_paired_fma_simd(*as[0], *as[1], *outs[0], *outs[1]);
             for (size_t i = 2; i < N; ++i) {
@@ -144,21 +165,106 @@ template <class Params> struct WasmFmaBackend {
         }
     }
 
+    // Integer 11×24-bit Montgomery mul (R = 2^264). Pure u64 arithmetic.
+    // BB_INLINE _impl so it merges into the noinline triple wrappers.
+    BB_INLINE static field<Params> mul_int24_impl(const field<Params>& lhs, const field<Params>& rhs) noexcept;
+
+    BB_INLINE static field<Params> sqr_int24_impl(const field<Params>& x) noexcept { return mul_int24_impl(x, x); }
+
+    // Public non-inlined entry point for standalone int24 use (tests, etc.).
+    static field<Params> mul_int24(const field<Params>& lhs, const field<Params>& rhs) noexcept
+    {
+        return mul_int24_impl(lhs, rhs);
+    }
+
   private:
     static field<Params> mul_fma_simd(const field<Params>& lhs, const field<Params>& rhs) noexcept;
-    static void mul_paired_fma_simd(const field<Params>& a1,
-                                    const field<Params>& b1,
-                                    const field<Params>& a2,
-                                    const field<Params>& b2,
-                                    field<Params>& out1,
-                                    field<Params>& out2) noexcept;
-    static void sqr_paired_fma_simd(const field<Params>& a1,
-                                    const field<Params>& a2,
-                                    field<Params>& out1,
-                                    field<Params>& out2) noexcept;
+
+    // BB_INLINE _impl kernels: the raw kernel bodies. These inline into
+    // whichever noinline wrapper calls them.
+    BB_INLINE static void mul_paired_fma_simd_impl(const field<Params>& a1,
+                                                    const field<Params>& b1,
+                                                    const field<Params>& a2,
+                                                    const field<Params>& b2,
+                                                    field<Params>& out1,
+                                                    field<Params>& out2) noexcept;
+    BB_INLINE static void sqr_paired_fma_simd_impl(const field<Params>& a1,
+                                                    const field<Params>& a2,
+                                                    field<Params>& out1,
+                                                    field<Params>& out2) noexcept;
+
+    // Noinline wrappers around individual kernels. Called by N=1 and N=2
+    // paths. Compact call site — the kernel body lives in exactly one
+    // place in the WASM binary.
+    __attribute__((noinline)) static void mul_paired_fma_simd(
+        const field<Params>& a1, const field<Params>& b1,
+        const field<Params>& a2, const field<Params>& b2,
+        field<Params>& out1, field<Params>& out2) noexcept
+    {
+        mul_paired_fma_simd_impl(a1, b1, a2, b2, out1, out2);
+    }
+
+    __attribute__((noinline)) static void sqr_paired_fma_simd(
+        const field<Params>& a1, const field<Params>& a2,
+        field<Params>& out1, field<Params>& out2) noexcept
+    {
+        sqr_paired_fma_simd_impl(a1, a2, out1, out2);
+    }
+
+    // Noinline wrappers for N=3 co-scheduling. Both _impl kernels are
+    // BB_INLINE, so LLVM merges their bodies into this one function.
+    // The scheduler can then interleave i64 ops (mul_int24) with f64
+    // FMA ops (mul_paired_fma_simd) in the same basic block.
+    __attribute__((noinline)) static void mul_triple_noinline(
+        const field<Params>& a0, const field<Params>& b0,
+        const field<Params>& a1, const field<Params>& b1,
+        const field<Params>& a2, const field<Params>& b2,
+        field<Params>& o0, field<Params>& o1, field<Params>& o2) noexcept
+    {
+        o2 = mul_int24_impl(a2, b2);
+        mul_paired_fma_simd_impl(a0, b0, a1, b1, o0, o1);
+    }
+
+    __attribute__((noinline)) static void sqr_triple_noinline(
+        const field<Params>& a0, const field<Params>& a1, const field<Params>& a2,
+        field<Params>& o0, field<Params>& o1, field<Params>& o2) noexcept
+    {
+        o2 = sqr_int24_impl(a2);
+        sqr_paired_fma_simd_impl(a0, a1, o0, o1);
+    }
+
+    // N=5: two paired FMAs + one integer, all inlined. Integer sandwiched
+    // between the two FMA calls so its i64 ops can hide in the gap.
+    __attribute__((noinline)) static void mul_quint_noinline(
+        const field<Params>& a0, const field<Params>& b0,
+        const field<Params>& a1, const field<Params>& b1,
+        const field<Params>& a2, const field<Params>& b2,
+        const field<Params>& a3, const field<Params>& b3,
+        const field<Params>& a4, const field<Params>& b4,
+        field<Params>& o0, field<Params>& o1,
+        field<Params>& o2,
+        field<Params>& o3, field<Params>& o4) noexcept
+    {
+        mul_paired_fma_simd_impl(a0, b0, a1, b1, o0, o1);
+        o2 = mul_int24_impl(a2, b2);
+        mul_paired_fma_simd_impl(a3, b3, a4, b4, o3, o4);
+    }
+
+    __attribute__((noinline)) static void sqr_quint_noinline(
+        const field<Params>& a0, const field<Params>& a1,
+        const field<Params>& a2,
+        const field<Params>& a3, const field<Params>& a4,
+        field<Params>& o0, field<Params>& o1,
+        field<Params>& o2,
+        field<Params>& o3, field<Params>& o4) noexcept
+    {
+        sqr_paired_fma_simd_impl(a0, a1, o0, o1);
+        o2 = sqr_int24_impl(a2);
+        sqr_paired_fma_simd_impl(a3, a4, o3, o4);
+    }
 
     // Shared Phase 3 (reduction) + Phase 4 (extract & pack) for both
-    // mul_paired_fma_simd and sqr_paired_fma_simd. The kernel-specific product
+    // mul_paired_fma_simd_impl and sqr_paired_fma_simd_impl. The kernel-specific product
     // phase populates t[0..20] (two 11-limb lanes worth of pre-reduced f64
     // values); this helper performs 10 Yuval steps + 1 standard step of
     // Montgomery reduction, then integer carry-propagates each lane back into
@@ -899,6 +1005,138 @@ void WasmFmaBackend<Params>::reduce_and_finalize_paired(v128_t* t, field<Params>
     EXTRACT_AND_FINALIZE(1, out2)
 
 #undef EXTRACT_AND_FINALIZE
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Integer 11×24-bit Montgomery multiplication (R = 2^264).
+// Pure u64 arithmetic. BB_INLINE so LLVM can interleave its integer ops
+// with the f64 FMA ops of mul_paired_fma_simd when both are inlined into
+// mul_batched<3>.
+// ═════════════════════════════════════════════════════════════════════════
+
+template <class Params>
+field<Params> WasmFmaBackend<Params>::mul_int24_impl(const field<Params>& lhs, const field<Params>& rhs) noexcept
+{
+    constexpr auto modulus = field<Params>::modulus;
+    constexpr uint64_t M24 = (1ULL << R_LIMB_BITS) - 1;
+    constexpr uint64_t NP0 = compute_r_inv(modulus.data[0]) & M24;
+    constexpr uint64_t m0 = modulus.data[0] & M24;
+    constexpr uint64_t m1 = (modulus.data[0] >> 24) & M24;
+    constexpr uint64_t m2 = ((modulus.data[0] >> 48) | (modulus.data[1] << 16)) & M24;
+    constexpr uint64_t m3 = (modulus.data[1] >> 8) & M24;
+    constexpr uint64_t m4 = (modulus.data[1] >> 32) & M24;
+    constexpr uint64_t m5 = ((modulus.data[1] >> 56) | (modulus.data[2] << 8)) & M24;
+    constexpr uint64_t m6 = (modulus.data[2] >> 16) & M24;
+    constexpr uint64_t m7 = (modulus.data[2] >> 40) & M24;
+    constexpr uint64_t m8 = modulus.data[3] & M24;
+    constexpr uint64_t m9 = (modulus.data[3] >> 24) & M24;
+    constexpr uint64_t m10 = modulus.data[3] >> 48;
+
+    const uint64_t* a = lhs.data;
+    const uint64_t* b = rhs.data;
+
+    const uint64_t a0 = a[0] & M24;
+    const uint64_t a1 = (a[0] >> 24) & M24;
+    const uint64_t a2 = ((a[0] >> 48) | (a[1] << 16)) & M24;
+    const uint64_t a3 = (a[1] >> 8) & M24;
+    const uint64_t a4 = (a[1] >> 32) & M24;
+    const uint64_t a5 = ((a[1] >> 56) | (a[2] << 8)) & M24;
+    const uint64_t a6 = (a[2] >> 16) & M24;
+    const uint64_t a7 = (a[2] >> 40) & M24;
+    const uint64_t a8 = a[3] & M24;
+    const uint64_t a9 = (a[3] >> 24) & M24;
+    const uint64_t a10 = a[3] >> 48;
+
+    const uint64_t b0 = b[0] & M24;
+    const uint64_t b1 = (b[0] >> 24) & M24;
+    const uint64_t b2 = ((b[0] >> 48) | (b[1] << 16)) & M24;
+    const uint64_t b3 = (b[1] >> 8) & M24;
+    const uint64_t b4 = (b[1] >> 32) & M24;
+    const uint64_t b5 = ((b[1] >> 56) | (b[2] << 8)) & M24;
+    const uint64_t b6 = (b[2] >> 16) & M24;
+    const uint64_t b7 = (b[2] >> 40) & M24;
+    const uint64_t b8 = b[3] & M24;
+    const uint64_t b9 = (b[3] >> 24) & M24;
+    const uint64_t b10 = b[3] >> 48;
+
+    uint64_t t0 = a0 * b0;
+    uint64_t t1 = a0 * b1 + a1 * b0;
+    uint64_t t2 = a0 * b2 + a1 * b1 + a2 * b0;
+    uint64_t t3 = a0 * b3 + a1 * b2 + a2 * b1 + a3 * b0;
+    uint64_t t4 = a0 * b4 + a1 * b3 + a2 * b2 + a3 * b1 + a4 * b0;
+    uint64_t t5 = a0 * b5 + a1 * b4 + a2 * b3 + a3 * b2 + a4 * b1 + a5 * b0;
+    uint64_t t6 = a0 * b6 + a1 * b5 + a2 * b4 + a3 * b3 + a4 * b2 + a5 * b1 + a6 * b0;
+    uint64_t t7 = a0 * b7 + a1 * b6 + a2 * b5 + a3 * b4 + a4 * b3 + a5 * b2 + a6 * b1 + a7 * b0;
+    uint64_t t8 = a0 * b8 + a1 * b7 + a2 * b6 + a3 * b5 + a4 * b4 + a5 * b3 + a6 * b2 + a7 * b1 + a8 * b0;
+    uint64_t t9 = a0 * b9 + a1 * b8 + a2 * b7 + a3 * b6 + a4 * b5 + a5 * b4 + a6 * b3 + a7 * b2 + a8 * b1 + a9 * b0;
+    uint64_t t10 = a0 * b10 + a1 * b9 + a2 * b8 + a3 * b7 + a4 * b6 + a5 * b5 + a6 * b4 + a7 * b3 + a8 * b2 +
+                   a9 * b1 + a10 * b0;
+    uint64_t t11 =
+        a1 * b10 + a2 * b9 + a3 * b8 + a4 * b7 + a5 * b6 + a6 * b5 + a7 * b4 + a8 * b3 + a9 * b2 + a10 * b1;
+    uint64_t t12 = a2 * b10 + a3 * b9 + a4 * b8 + a5 * b7 + a6 * b6 + a7 * b5 + a8 * b4 + a9 * b3 + a10 * b2;
+    uint64_t t13 = a3 * b10 + a4 * b9 + a5 * b8 + a6 * b7 + a7 * b6 + a8 * b5 + a9 * b4 + a10 * b3;
+    uint64_t t14 = a4 * b10 + a5 * b9 + a6 * b8 + a7 * b7 + a8 * b6 + a9 * b5 + a10 * b4;
+    uint64_t t15 = a5 * b10 + a6 * b9 + a7 * b8 + a8 * b7 + a9 * b6 + a10 * b5;
+    uint64_t t16 = a6 * b10 + a7 * b9 + a8 * b8 + a9 * b7 + a10 * b6;
+    uint64_t t17 = a7 * b10 + a8 * b9 + a9 * b8 + a10 * b7;
+    uint64_t t18 = a8 * b10 + a9 * b9 + a10 * b8;
+    uint64_t t19 = a9 * b10 + a10 * b9;
+    uint64_t t20 = a10 * b10;
+
+#define MONT_REDUCE_STEP(TI, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)                                                  \
+    {                                                                                                                  \
+        const uint64_t k = ((TI) * NP0) & M24;                                                                         \
+        (TI) += k * m0;                                                                                                \
+        (T1) += k * m1;                                                                                                \
+        (T2) += k * m2;                                                                                                \
+        (T3) += k * m3;                                                                                                \
+        (T4) += k * m4;                                                                                                \
+        (T5) += k * m5;                                                                                                \
+        (T6) += k * m6;                                                                                                \
+        (T7) += k * m7;                                                                                                \
+        (T8) += k * m8;                                                                                                \
+        (T9) += k * m9;                                                                                                \
+        (T10) += k * m10;                                                                                              \
+        (T1) += (TI) >> R_LIMB_BITS;                                                                                   \
+    }
+
+    MONT_REDUCE_STEP(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10)
+    MONT_REDUCE_STEP(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
+    MONT_REDUCE_STEP(t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12)
+    MONT_REDUCE_STEP(t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13)
+    MONT_REDUCE_STEP(t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14)
+    MONT_REDUCE_STEP(t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15)
+    MONT_REDUCE_STEP(t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16)
+    MONT_REDUCE_STEP(t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17)
+    MONT_REDUCE_STEP(t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18)
+    MONT_REDUCE_STEP(t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19)
+    MONT_REDUCE_STEP(t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20)
+
+#undef MONT_REDUCE_STEP
+
+    t12 += t11 >> R_LIMB_BITS;
+    t11 &= M24;
+    t13 += t12 >> R_LIMB_BITS;
+    t12 &= M24;
+    t14 += t13 >> R_LIMB_BITS;
+    t13 &= M24;
+    t15 += t14 >> R_LIMB_BITS;
+    t14 &= M24;
+    t16 += t15 >> R_LIMB_BITS;
+    t15 &= M24;
+    t17 += t16 >> R_LIMB_BITS;
+    t16 &= M24;
+    t18 += t17 >> R_LIMB_BITS;
+    t17 &= M24;
+    t19 += t18 >> R_LIMB_BITS;
+    t18 &= M24;
+    t20 += t19 >> R_LIMB_BITS;
+    t19 &= M24;
+
+    return { t11 | (t12 << 24) | (t13 << 48),
+             (t13 >> 16) | (t14 << 8) | (t15 << 32) | (t16 << 56),
+             (t16 >> 8) | (t17 << 16) | (t18 << 40),
+             t19 | (t20 << 24) };
 }
 
 } // namespace bb::detail

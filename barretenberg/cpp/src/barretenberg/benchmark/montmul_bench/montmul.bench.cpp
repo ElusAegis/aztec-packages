@@ -67,6 +67,48 @@ struct SqrBatch2Op {
     }
 };
 
+struct MulBatch3Op {
+    static constexpr size_t kWidth = 3;
+    static constexpr const char* kName = "MulBatch3";
+    template <typename F> BB_INLINE static void run(F* x, const F* y)
+    {
+        F::template montgomery_mul_batched<3>(
+            { &x[0], &x[1], &x[2] }, { &y[0], &y[1], &y[2] }, { &x[0], &x[1], &x[2] });
+    }
+};
+
+struct SqrBatch3Op {
+    static constexpr size_t kWidth = 3;
+    static constexpr const char* kName = "SqrBatch3";
+    template <typename F> BB_INLINE static void run(F* x, const F* /*y*/)
+    {
+        F::template montgomery_sqr_batched<3>({ &x[0], &x[1], &x[2] }, { &x[0], &x[1], &x[2] });
+    }
+};
+
+struct MulBatch5Op {
+    static constexpr size_t kWidth = 5;
+    static constexpr const char* kName = "MulBatch5";
+    template <typename F> BB_INLINE static void run(F* x, const F* y)
+    {
+        F::template montgomery_mul_batched<5>(
+            { &x[0], &x[1], &x[2], &x[3], &x[4] },
+            { &y[0], &y[1], &y[2], &y[3], &y[4] },
+            { &x[0], &x[1], &x[2], &x[3], &x[4] });
+    }
+};
+
+struct SqrBatch5Op {
+    static constexpr size_t kWidth = 5;
+    static constexpr const char* kName = "SqrBatch5";
+    template <typename F> BB_INLINE static void run(F* x, const F* /*y*/)
+    {
+        F::template montgomery_sqr_batched<5>(
+            { &x[0], &x[1], &x[2], &x[3], &x[4] },
+            { &x[0], &x[1], &x[2], &x[3], &x[4] });
+    }
+};
+
 // --- Fixtures ---------------------------------------------------------------
 
 template <typename F, typename Op> void Latency(benchmark::State& state)
@@ -118,6 +160,10 @@ REGISTER_OP(MulOp);
 REGISTER_OP(SqrOp);
 REGISTER_OP(MulBatch2Op);
 REGISTER_OP(SqrBatch2Op);
+REGISTER_OP(MulBatch3Op);
+REGISTER_OP(SqrBatch3Op);
+REGISTER_OP(MulBatch5Op);
+REGISTER_OP(SqrBatch5Op);
 
 #undef REGISTER_OP
 
