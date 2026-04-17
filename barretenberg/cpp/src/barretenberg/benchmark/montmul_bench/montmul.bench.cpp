@@ -66,10 +66,8 @@ template <typename Op> std::string bench_name(const char* mode)
 {
     std::string name = "Fr_";
     name += Op::kIdentifier;
-    if constexpr (Op::kWidth != 1) {
-        name += "Batch";
-        name += std::to_string(Op::kWidth);
-    }
+    name += "Batch";
+    name += std::to_string(Op::kWidth);
     name += "_";
     name += mode;
     return name;
