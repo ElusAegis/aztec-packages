@@ -155,6 +155,7 @@ template <typename F, typename Op> void Throughput(benchmark::State& state)
 REGISTER_WIDTH(1);
 REGISTER_WIDTH(2);
 REGISTER_WIDTH(3);
+REGISTER_WIDTH(4);
 REGISTER_WIDTH(5);
 
 #undef REGISTER_WIDTH
