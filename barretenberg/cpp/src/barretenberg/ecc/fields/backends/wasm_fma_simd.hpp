@@ -16,7 +16,7 @@
 // ║  ⚠  CORRECTNESS WARNING — FMA mul_big delegation                      ║
 // ╠══════════════════════════════════════════════════════════════════════╣
 // ║  FMA uses R = 2^264 (11 × 24-bit limbs).                              ║
-// ║  mul_big delegates to ConstexprFallback::mul, which derives           ║
+// ║  mul_big delegates to bb::constexpr_mont_mul, which derives           ║
 // ║  R^{-1} from the platform's R_EXPONENT (= 264 for FMA). Correct but   ║
 // ║  O(256²) per multiply. Acceptable as a stopgap; a dedicated FMA       ║
 // ║  big-modulus kernel is future work.                                   ║
@@ -36,7 +36,6 @@
 #include "../field_constexpr_helpers.hpp"
 #include "../field_declarations.hpp"
 #include "../field_montgomery_config.hpp"
-#include "constexpr_fallback.hpp"
 #include "wasm_int29.hpp"
 
 namespace bb::detail {
@@ -69,9 +68,9 @@ template <class Params> struct WasmFmaBackend {
     //            See big banner comment at top of file.
     BB_INLINE static constexpr field<Params> mul_big(const field<Params>& lhs, const field<Params>& rhs) noexcept
     {
-        // ConstexprFallback uses R_EXPONENT (= 264 for FMA builds) — R-aware,
+        // constexpr_mont_mul uses R_EXPONENT (= 264 for FMA builds) — R-aware,
         // bit-correct. Slow (O(256²)), but FMA has no dedicated big-mul kernel.
-        return ConstexprFallback::mul(lhs, rhs);
+        return constexpr_mont_mul(lhs, rhs);
     }
 
     BB_INLINE static constexpr typename field<Params>::wide_array wide_mul(const field<Params>& lhs,

@@ -16,7 +16,6 @@
 
 // Include all backend headers — each self-guards via preprocessor so only
 // the applicable ones define their struct.
-#include "constexpr_fallback.hpp"
 #include "native_int128.hpp"
 #include "wasm_fma_simd.hpp"
 #include "wasm_int29.hpp"

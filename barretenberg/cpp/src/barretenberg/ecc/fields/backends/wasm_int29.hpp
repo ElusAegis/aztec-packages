@@ -521,7 +521,7 @@ constexpr field<Params> WasmInt29Backend<Params, REXP>::sqr(const field<Params>&
 // to 32 bits only works when the preceding Yuval chain divides by 2^232 in
 // one pass. The interleaved path divides by 2^29 after every madd, so all
 // nine steps must be 29-bit. mul_big is therefore only valid for REXP = 261;
-// the FMA backend uses its own ConstexprFallback-based big-mul path and
+// the FMA backend uses its own constexpr_mont_mul-based big-mul path and
 // never calls mul_big on a 264 instantiation.
 template <class Params, unsigned REXP>
 constexpr field<Params> WasmInt29Backend<Params, REXP>::mul_big(const field<Params>& lhs,

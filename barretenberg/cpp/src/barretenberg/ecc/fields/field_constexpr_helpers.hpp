@@ -6,6 +6,10 @@
 
 namespace bb {
 
+// Forward declaration: needed by constexpr_mont_mul below.
+// Full definition lives in field_declarations.hpp, which includes this header.
+template <class Params_> struct field;
+
 // -p^{-1} mod 2^64 via Newton's method (6 iterations: 1->2->4->8->16->32->64 correct bits)
 static constexpr uint64_t compute_r_inv(uint64_t p0)
 {
@@ -179,6 +183,33 @@ static constexpr uint256_t to_montgomery_uint256(const uint256_t& canonical,
 static constexpr auto compute_r_limb_constants(const uint256_t& modulus)
 {
     return compute_limb_constants<R_LIMB_BITS, R_NUM_LIMBS>(modulus);
+}
+
+// Constexpr-safe Montgomery multiplication via uint256_t modular arithmetic.
+//
+// Works for any R — derives R^{-1} from R_EXPONENT, so the Montgomery form
+// matches whatever R the platform backend uses (2^256, 2^261, 2^264, …).
+// O(256²) doublings per multiply; use only at compile time or as a slow
+// last-resort runtime path (e.g. FMA mul_big while no dedicated kernel exists).
+//
+// Requires field<Params> (full declaration via field_declarations.hpp) — callers
+// must include that header before this helper.
+template <class Params>
+static constexpr field<Params> constexpr_mont_mul(const field<Params>& lhs, const field<Params>& rhs) noexcept
+{
+    const uint256_t a_ui{ lhs.data[0], lhs.data[1], lhs.data[2], lhs.data[3] };
+    const uint256_t b_ui{ rhs.data[0], rhs.data[1], rhs.data[2], rhs.data[3] };
+
+    // R^{-1} mod p, computed once per instantiation. R_EXPONENT is the same
+    // constant that drives r_squared, so the Montgomery representation here
+    // matches the runtime path bit-for-bit.
+    constexpr uint256_t r_inv_mod_p = compute_div_r_inv(field<Params>::modulus, R_EXPONENT);
+
+    // Montgomery mul: (a · b) / R mod p.
+    const uint256_t ab_mod_p = mod_mul(a_ui, b_ui, field<Params>::modulus);
+    const uint256_t result = mod_mul(ab_mod_p, r_inv_mod_p, field<Params>::modulus);
+
+    return field<Params>{ result.data[0], result.data[1], result.data[2], result.data[3] };
 }
 
 } // namespace bb
