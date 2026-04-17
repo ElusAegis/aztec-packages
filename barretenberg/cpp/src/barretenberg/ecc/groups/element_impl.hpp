@@ -729,10 +729,9 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
         // Pair: points[i+1].y = points[i+1].y * acc;  acc = acc * points[i+1].x
         // (Both use the old acc; output aliasing is safe — the batched kernel
         //  reads all inputs into locals before writing any output.)
-        Fq::template montgomery_mul_batched<2>(
-            { &points[i + 1].y, &batch_inversion_accumulator },
-            { &batch_inversion_accumulator, &points[i + 1].x },
-            { &points[i + 1].y, &batch_inversion_accumulator });
+        Fq::template montgomery_mul_batched<2>({ &points[i + 1].y, &batch_inversion_accumulator },
+                                               { &batch_inversion_accumulator, &points[i + 1].x },
+                                               { &points[i + 1].y, &batch_inversion_accumulator });
     }
 
     if (batch_inversion_accumulator == Fq::zero()) {
@@ -740,30 +739,114 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
     }
     batch_inversion_accumulator = batch_inversion_accumulator.invert();
 
-    // Backward pass: complete inversions and compute additions.
-    // The two muls at the top of each iteration (lambda = y_diff * acc; acc *= x_diff)
-    // both read the old acc, so they are independent and fuse into a single paired kernel.
-    for (size_t i = num_points - 2; i < num_points; i -= 2) {
-        // lambda = (y2 - y1) / (x2 - x1)
-        Fq::template montgomery_mul_batched<2>(
-            { &points[i + 1].y, &batch_inversion_accumulator },
-            { &batch_inversion_accumulator, &points[i + 1].x },
-            { &points[i + 1].y, &batch_inversion_accumulator });
-        points[i + 1].x = points[i + 1].y.sqr();
-        // x3 = lambda^2 - (x1 + x2)
-        points[(i + num_points) >> 1].x = points[i + 1].x - scratch_space[i >> 1];
+    // Backward pass: complete inversions and compute additions — unrolled by 2.
+    //
+    // Each iteration of the single-pair form emits three kernels after the
+    // inversion accumulator update:
+    //   A: paired mul  (λ = (y2-y1)·acc;  acc *= (x2-x1))   — SERIAL on acc
+    //   B: single sqr  (λ²)                                 — local to the iteration
+    //   C: single mul  ((x1-x3)·λ)                          — local to the iteration
+    //
+    // A is a strict recurrence on batch_inversion_accumulator and stays the
+    // critical path. B and C depend only on the iteration's local λ, so
+    // across two adjacent iterations (hi and lo = hi − 2) they are
+    // independent and pair:
+    //   B_hi, B_lo → one sqr_paired<2>
+    //   C_hi, C_lo → one mul_paired<2>
+    // Per 2 iterations: 4 kernels (all paired) vs 6 before (2 paired + 4 singles).
+    //
+    // Tail: if num_points / 2 is odd, the remaining single pair falls back
+    // to the original 3-kernel form.
+    size_t i = num_points;
+    while (i >= 4) {
+        // Two adjacent pairs per step, high-index first (matches the
+        // original loop's descending order of consumption).
+        const size_t hi = i - 2; // lhs index of the higher pair
+        const size_t lo = i - 4; // lhs index of the lower pair
+        const size_t hi_out = (hi + num_points) >> 1;
+        const size_t lo_out = (lo + num_points) >> 1;
+        const size_t hi_scratch = hi >> 1;
+        const size_t lo_scratch = lo >> 1;
 
-        if (i >= 2) {
-            __builtin_prefetch(points + i - 2);
-            __builtin_prefetch(points + i - 1);
-            __builtin_prefetch(points + ((i + num_points - 2) >> 1));
-            __builtin_prefetch(scratch_space + ((i - 2) >> 1));
+        // A_hi — critical-path paired mul: λ_hi = (y2-y1)_hi · acc_in,  acc *= (x2-x1)_hi.
+        Fq::template montgomery_mul_batched<2>({ &points[hi + 1].y, &batch_inversion_accumulator },
+                                               { &batch_inversion_accumulator, &points[hi + 1].x },
+                                               { &points[hi + 1].y, &batch_inversion_accumulator });
+
+        // A_lo — critical-path paired mul: λ_lo = (y2-y1)_lo · acc_after_hi,  acc *= (x2-x1)_lo.
+        // Must follow A_hi (serial on batch_inversion_accumulator).
+        Fq::template montgomery_mul_batched<2>({ &points[lo + 1].y, &batch_inversion_accumulator },
+                                               { &batch_inversion_accumulator, &points[lo + 1].x },
+                                               { &points[lo + 1].y, &batch_inversion_accumulator });
+        // Now: points[hi+1].y == λ_hi  and  points[lo+1].y == λ_lo.
+
+        // B_pair — paired squaring of the two lambdas. Output to locals, NOT
+        // to points[hi+1].x / points[lo+1].x directly, because the output
+        // slot for pair `lo` (lo_out = (lo+N)/2) equals `hi` for adjacent
+        // pairs — writing x3_lo to points[lo_out].x would clobber x1_hi
+        // before the C_pair mul below needs it. Staging in locals makes the
+        // two pairs' writes independent of each other's reads.
+        Fq lambda_sq_hi;
+        Fq lambda_sq_lo;
+        Fq::template montgomery_sqr_batched<2>({ &points[hi + 1].y, &points[lo + 1].y },
+                                               { &lambda_sq_hi, &lambda_sq_lo });
+
+        // x3 = λ² − (x1 + x2). Subtractions into locals.
+        const Fq x3_hi = lambda_sq_hi - scratch_space[hi_scratch];
+        const Fq x3_lo = lambda_sq_lo - scratch_space[lo_scratch];
+
+        // (x1 − x3) into locals — captured BEFORE any output write touches
+        // points[hi].x or points[lo].x.
+        const Fq x_diff_hi = points[hi].x - x3_hi;
+        const Fq x_diff_lo = points[lo].x - x3_lo;
+
+        // Prefetch the next unrolled step's working set (pairs at i−6 and i−8).
+        // Matches the single-iter loop's 4-prefetches-per-iteration density.
+        if (i >= 8) {
+            __builtin_prefetch(points + (i - 6));
+            __builtin_prefetch(points + (i - 5));
+            __builtin_prefetch(points + (i - 8));
+            __builtin_prefetch(points + (i - 7));
+            __builtin_prefetch(points + ((i + num_points - 6) >> 1));
+            __builtin_prefetch(points + ((i + num_points - 8) >> 1));
+            __builtin_prefetch(scratch_space + ((i - 6) >> 1));
+            __builtin_prefetch(scratch_space + ((i - 8) >> 1));
         }
 
-        // y3 = lambda * (x1 - x3) - y1
-        points[i].x -= points[(i + num_points) >> 1].x;
-        points[i].x *= points[i + 1].y;
-        points[(i + num_points) >> 1].y = points[i].x - points[i].y;
+        // C_pair — paired mul: {(x1−x3)_hi · λ_hi,  (x1−x3)_lo · λ_lo} into locals.
+        Fq prod_hi;
+        Fq prod_lo;
+        Fq::template montgomery_mul_batched<2>({ &x_diff_hi, &x_diff_lo },
+                                               { &points[hi + 1].y, &points[lo + 1].y },
+                                               { &prod_hi, &prod_lo });
+
+        // y3 = (x1 − x3) · λ − y1. Read lhs.y BEFORE the output .y writes
+        // (for adjacent pairs, points[lo_out].y aliases points[hi].y).
+        const Fq y3_hi = prod_hi - points[hi].y;
+        const Fq y3_lo = prod_lo - points[lo].y;
+
+        // All inputs captured; commit outputs. Order within each .x / .y
+        // pair is irrelevant now — locals break the aliasing.
+        points[hi_out].x = x3_hi;
+        points[lo_out].x = x3_lo;
+        points[hi_out].y = y3_hi;
+        points[lo_out].y = y3_lo;
+
+        i -= 4;
+    }
+
+    // Tail: at most one pair remains (lhs index 0). This happens iff
+    // num_points / 2 was odd. No cross-iteration partner is available,
+    // so fall back to the original 3-kernel single-pair form.
+    if (i == 2) {
+        Fq::template montgomery_mul_batched<2>({ &points[1].y, &batch_inversion_accumulator },
+                                               { &batch_inversion_accumulator, &points[1].x },
+                                               { &points[1].y, &batch_inversion_accumulator });
+        points[1].x = points[1].y.sqr();
+        points[num_points >> 1].x = points[1].x - scratch_space[0];
+        points[0].x -= points[num_points >> 1].x;
+        points[0].x *= points[1].y;
+        points[num_points >> 1].y = points[0].x - points[0].y;
     }
 }
 
