@@ -334,6 +334,18 @@ template <class Params_> struct alignas(32) field {
     BB_INLINE constexpr void self_to_montgomery_form_reduced() & noexcept;
     BB_INLINE constexpr void self_from_montgomery_form_reduced() & noexcept;
 
+    // Batched in-place conversions. Route N independent conversions through
+    // montgomery_mul_batched<N>, which on WASM-FMA-SIMD pairs two slots into
+    // a single f64x2 kernel (N=2 is the primary intended use).
+    template <size_t N>
+    BB_INLINE static constexpr void self_to_montgomery_form_batched(std::array<field*, N> xs) noexcept;
+    template <size_t N>
+    BB_INLINE static constexpr void self_from_montgomery_form_batched(std::array<field*, N> xs) noexcept;
+    template <size_t N>
+    BB_INLINE static constexpr void self_to_montgomery_form_reduced_batched(std::array<field*, N> xs) noexcept;
+    template <size_t N>
+    BB_INLINE static constexpr void self_from_montgomery_form_reduced_batched(std::array<field*, N> xs) noexcept;
+
     BB_INLINE constexpr void self_conditional_negate(uint64_t predicate) & noexcept;
 
     BB_INLINE constexpr field reduce_once() const noexcept;

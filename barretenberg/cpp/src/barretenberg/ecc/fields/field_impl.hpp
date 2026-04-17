@@ -284,6 +284,65 @@ template <class T> constexpr void field<T>::self_from_montgomery_form_reduced() 
     self_reduce_once();
 }
 
+// Batched in-place conversions. Each wraps montgomery_mul_batched<N> with the
+// appropriate constant (one_raw for `from_`, r_squared for `to_`), followed by
+// an optional self_reduce_once pass for the `_reduced` variants. On the WASM
+// FMA-SIMD backend, N=2 maps to the paired f64x2 kernel, cutting the per-slot
+// cost of the MSM scalar pre-/post-pass. Aliasing `outs[i] == xs[i]` is safe:
+// the kernel reads all inputs to locals before writing outputs.
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_to_montgomery_form_batched(std::array<field*, N> xs) noexcept
+{
+    constexpr field r_squared =
+        field{ r_squared_uint.data[0], r_squared_uint.data[1], r_squared_uint.data[2], r_squared_uint.data[3] };
+    std::array<const field*, N> as{};
+    std::array<const field*, N> bs{};
+    std::array<field*, N> outs{};
+    for (size_t i = 0; i < N; ++i) {
+        as[i] = xs[i];
+        bs[i] = &r_squared;
+        outs[i] = xs[i];
+    }
+    montgomery_mul_batched<N>(as, bs, outs);
+}
+
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_from_montgomery_form_batched(std::array<field*, N> xs) noexcept
+{
+    constexpr field one_raw{ 1, 0, 0, 0 };
+    std::array<const field*, N> as{};
+    std::array<const field*, N> bs{};
+    std::array<field*, N> outs{};
+    for (size_t i = 0; i < N; ++i) {
+        as[i] = xs[i];
+        bs[i] = &one_raw;
+        outs[i] = xs[i];
+    }
+    montgomery_mul_batched<N>(as, bs, outs);
+}
+
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_to_montgomery_form_reduced_batched(std::array<field*, N> xs) noexcept
+{
+    self_to_montgomery_form_batched<N>(xs);
+    for (size_t i = 0; i < N; ++i) {
+        xs[i]->self_reduce_once();
+    }
+}
+
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_from_montgomery_form_reduced_batched(std::array<field*, N> xs) noexcept
+{
+    self_from_montgomery_form_batched<N>(xs);
+    for (size_t i = 0; i < N; ++i) {
+        xs[i]->self_reduce_once();
+    }
+}
+
 template <class T> constexpr field<T> field<T>::reduce_once() const noexcept
 {
     if constexpr (use_generic_arithmetic) {
