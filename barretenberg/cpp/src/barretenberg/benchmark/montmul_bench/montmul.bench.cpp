@@ -1,30 +1,21 @@
 // Templated microbenchmark for four BN254 scalar-field Montgomery kernels:
 //
-//   Mul        : x = x * y                       (single montgomery_mul)
-//   Sqr        : x = x^2                         (single montgomery_square)
-//   MulBatch2  : (x1, x2) = (x1*y1, x2*y2)       (montgomery_mul_batched<2>)
-//   SqrBatch2  : (x1, x2) = (x1^2,  x2^2)        (montgomery_sqr_batched<2>)
-//
 // Each kernel runs in two fixtures:
 //
-//   Latency    : one dependent kernel call per loop iteration. Each iter
-//                reads the output of the previous iter, serialising the
-//                kernel so we measure per-op latency.
+//   Latency    : one dependent kernel call per benchmark iteration. The
+//                output feeds the next iteration, so this measures
+//                per-call latency.
 //
-//   Throughput : BATCH independent kernel calls per loop iteration. Each
-//                kernel touches its own chunk of storage, so the CPU can
-//                pipeline them — measures steady-state items/s and exposes
-//                ILP that the latency chain hides.
+//   Throughput : BATCH independent kernel calls per benchmark iteration.
+//                Each call has its own storage, exposing ILP that the
+//                latency chain hides.
 //
-// Only Fr (BN254 scalar) is benchmarked. Fq and Fr share the same montmul
-// algorithm — only the modulus constants differ — so running both produces
-// duplicate numbers and doubles bench wall-time for no new signal.
+// Only Fr is benchmarked. Fq uses the same Montgomery algorithms with
+// different constants, so it would duplicate the signal without adding a
+// new code path.
 //
-// `kWidth` on each op tag records how many field multiplications a single
-// kernel call performs (1 for single, 2 for batched<2>). Latency and
-// throughput reports divide wall time by width to normalise everything to
-// ns/mul, so the single-vs-batched speedup reads straight off the per-mul
-// column.
+// `kWidth` controls the batch size, so one kernel call performs `kWidth`
+// independent muls or sqrs.
 
 #include "barretenberg/ecc/curves/bn254/bn254.hpp"
 #include <array>
@@ -37,75 +28,76 @@ namespace {
 
 // --- Operation tags -----------------------------------------------------------
 
-struct MulOp {
-    static constexpr size_t kWidth = 1;
-    static constexpr const char* kName = "Mul";
-    template <typename F> BB_INLINE static void run(F* x, const F* y) { x[0] *= y[0]; }
+template <typename F, size_t Width> BB_INLINE auto make_ptrs(std::array<F, Width>& values)
+{
+    std::array<F*, Width> ptrs{};
+    for (size_t i = 0; i < Width; ++i) {
+        ptrs[i] = &values[i];
+    }
+    return ptrs;
+}
+
+template <typename F, size_t Width> BB_INLINE auto make_const_ptrs(const std::array<F, Width>& values)
+{
+    std::array<const F*, Width> ptrs{};
+    for (size_t i = 0; i < Width; ++i) {
+        ptrs[i] = &values[i];
+    }
+    return ptrs;
+}
+
+template <typename F, size_t Width> struct BatchViews {
+    std::array<const F*, Width> x_inputs;
+    std::array<const F*, Width> y_inputs;
+    std::array<F*, Width> x_outputs;
 };
 
-struct SqrOp {
-    static constexpr size_t kWidth = 1;
-    static constexpr const char* kName = "Sqr";
-    template <typename F> BB_INLINE static void run(F* x, const F* /*y*/) { x[0].self_sqr(); }
-};
+template <typename F, size_t Width>
+BB_INLINE auto randomize_batch(std::array<F, Width>& x, std::array<F, Width>& y) -> BatchViews<F, Width>
+{
+    for (size_t i = 0; i < Width; ++i) {
+        x[i] = F::random_element();
+        y[i] = F::random_element();
+    }
+    return { make_const_ptrs(x), make_const_ptrs(y), make_ptrs(x) };
+}
 
-struct MulBatch2Op {
-    static constexpr size_t kWidth = 2;
-    static constexpr const char* kName = "MulBatch2";
-    template <typename F> BB_INLINE static void run(F* x, const F* y)
+template <typename Op> std::string bench_name(const char* mode)
+{
+    std::string name = "Fr_";
+    name += Op::kIdentifier;
+    if constexpr (Op::kWidth != 1) {
+        name += "Batch";
+        name += std::to_string(Op::kWidth);
+    }
+    name += "_";
+    name += mode;
+    return name;
+}
+
+template <size_t Width> struct MulOp {
+    static constexpr size_t kWidth = Width;
+    static constexpr const char* kIdentifier = "Mul";
+
+    template <typename F>
+    BB_INLINE static void run(const std::array<const F*, Width>& x_inputs,
+                              const std::array<const F*, Width>& y_inputs,
+                              const std::array<F*, Width>& x_outputs)
     {
-        F::template montgomery_mul_batched<2>({ &x[0], &x[1] }, { &y[0], &y[1] }, { &x[0], &x[1] });
+        F::template montgomery_mul_batched<Width>(x_inputs, y_inputs, x_outputs);
     }
 };
 
-struct SqrBatch2Op {
-    static constexpr size_t kWidth = 2;
-    static constexpr const char* kName = "SqrBatch2";
-    template <typename F> BB_INLINE static void run(F* x, const F* /*y*/)
-    {
-        F::template montgomery_sqr_batched<2>({ &x[0], &x[1] }, { &x[0], &x[1] });
-    }
-};
+template <size_t Width> struct SqrOp {
+    static constexpr size_t kWidth = Width;
+    static constexpr const char* kIdentifier = "Sqr";
 
-struct MulBatch3Op {
-    static constexpr size_t kWidth = 3;
-    static constexpr const char* kName = "MulBatch3";
-    template <typename F> BB_INLINE static void run(F* x, const F* y)
+    template <typename F>
+    BB_INLINE static void run(const std::array<const F*, Width>& x_inputs,
+                              const std::array<const F*, Width>& /*y_inputs*/,
+                              const std::array<F*, Width>& x_outputs)
     {
-        F::template montgomery_mul_batched<3>(
-            { &x[0], &x[1], &x[2] }, { &y[0], &y[1], &y[2] }, { &x[0], &x[1], &x[2] });
-    }
-};
-
-struct SqrBatch3Op {
-    static constexpr size_t kWidth = 3;
-    static constexpr const char* kName = "SqrBatch3";
-    template <typename F> BB_INLINE static void run(F* x, const F* /*y*/)
-    {
-        F::template montgomery_sqr_batched<3>({ &x[0], &x[1], &x[2] }, { &x[0], &x[1], &x[2] });
-    }
-};
-
-struct MulBatch5Op {
-    static constexpr size_t kWidth = 5;
-    static constexpr const char* kName = "MulBatch5";
-    template <typename F> BB_INLINE static void run(F* x, const F* y)
-    {
-        F::template montgomery_mul_batched<5>(
-            { &x[0], &x[1], &x[2], &x[3], &x[4] },
-            { &y[0], &y[1], &y[2], &y[3], &y[4] },
-            { &x[0], &x[1], &x[2], &x[3], &x[4] });
-    }
-};
-
-struct SqrBatch5Op {
-    static constexpr size_t kWidth = 5;
-    static constexpr const char* kName = "SqrBatch5";
-    template <typename F> BB_INLINE static void run(F* x, const F* /*y*/)
-    {
-        F::template montgomery_sqr_batched<5>(
-            { &x[0], &x[1], &x[2], &x[3], &x[4] },
-            { &x[0], &x[1], &x[2], &x[3], &x[4] });
+        F::template montgomery_sqr_batched<Width>(x_inputs, x_outputs);
     }
 };
 
@@ -115,12 +107,9 @@ template <typename F, typename Op> void Latency(benchmark::State& state)
 {
     std::array<F, Op::kWidth> x;
     std::array<F, Op::kWidth> y;
-    for (size_t i = 0; i < Op::kWidth; ++i) {
-        x[i] = F::random_element();
-        y[i] = F::random_element();
-    }
+    const auto batch = randomize_batch(x, y);
     for (auto _ : state) {
-        Op::template run<F>(x.data(), y.data());
+        Op::template run<F>(batch.x_inputs, batch.y_inputs, batch.x_outputs);
         benchmark::DoNotOptimize(x);
     }
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) * Op::kWidth);
@@ -129,16 +118,15 @@ template <typename F, typename Op> void Latency(benchmark::State& state)
 template <typename F, typename Op> void Throughput(benchmark::State& state)
 {
     constexpr size_t BATCH = 64;
-    constexpr size_t N = BATCH * Op::kWidth;
-    std::array<F, N> xs;
-    std::array<F, N> ys;
-    for (size_t i = 0; i < N; ++i) {
-        xs[i] = F::random_element();
-        ys[i] = F::random_element();
+    std::array<std::array<F, Op::kWidth>, BATCH> xs;
+    std::array<std::array<F, Op::kWidth>, BATCH> ys;
+    std::array<BatchViews<F, Op::kWidth>, BATCH> batches;
+    for (size_t i = 0; i < BATCH; ++i) {
+        batches[i] = randomize_batch(xs[i], ys[i]);
     }
     for (auto _ : state) {
         for (size_t i = 0; i < BATCH; ++i) {
-            Op::template run<F>(&xs[i * Op::kWidth], &ys[i * Op::kWidth]);
+            Op::template run<F>(batches[i].x_inputs, batches[i].y_inputs, batches[i].x_outputs);
         }
         benchmark::DoNotOptimize(xs);
     }
@@ -153,18 +141,23 @@ template <typename F, typename Op> void Throughput(benchmark::State& state)
 // previous baseline so historical tier-1 runs remain directly comparable.
 
 #define REGISTER_OP(Op)                                                                                                \
-    BENCHMARK_TEMPLATE(Latency, Fr, Op)->Name(std::string("Fr_") + Op::kName + "_Latency")->Iterations(1 << 20);       \
-    BENCHMARK_TEMPLATE(Throughput, Fr, Op)->Name(std::string("Fr_") + Op::kName + "_Throughput")->Iterations(1 << 16)
+    BENCHMARK_TEMPLATE(Latency, Fr, Op)                                                                                \
+        ->Name(bench_name<Op>("Latency"))                                                                              \
+        ->Iterations(1 << 20);                                                                                         \
+    BENCHMARK_TEMPLATE(Throughput, Fr, Op)                                                                             \
+        ->Name(bench_name<Op>("Throughput"))                                                                           \
+        ->Iterations(1 << 16)
 
-REGISTER_OP(MulOp);
-REGISTER_OP(SqrOp);
-REGISTER_OP(MulBatch2Op);
-REGISTER_OP(SqrBatch2Op);
-REGISTER_OP(MulBatch3Op);
-REGISTER_OP(SqrBatch3Op);
-REGISTER_OP(MulBatch5Op);
-REGISTER_OP(SqrBatch5Op);
+#define REGISTER_WIDTH(Width)                                                                                          \
+    REGISTER_OP(MulOp<Width>);                                                                                         \
+    REGISTER_OP(SqrOp<Width>)
 
+REGISTER_WIDTH(1);
+REGISTER_WIDTH(2);
+REGISTER_WIDTH(3);
+REGISTER_WIDTH(5);
+
+#undef REGISTER_WIDTH
 #undef REGISTER_OP
 
 BENCHMARK_MAIN();
