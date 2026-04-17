@@ -7,11 +7,10 @@
 // -msimd128 -mrelaxed-simd.
 //
 // Entry points:
-//   mul          — single mul, SIMD within (P_lo/P_cross parallel)
-//   sqr          — dedicated triangular-product square, SIMD via paired kernel
-//   mul_batched  — N independent muls at once (N=2 routes through the paired
-//                  SIMD kernel; other N fall back to paired + singles)
-//   sqr_batched  — N independent sqrs at once, symmetric to mul_batched
+//   mul          — single mul, routed through mul_batched<1>
+//   sqr          — single sqr, routed through sqr_batched<1>
+//   mul_batched  — N independent muls at once
+//   sqr_batched  — N independent sqrs at once
 //
 // ╔══════════════════════════════════════════════════════════════════════╗
 // ║  ⚠  CORRECTNESS WARNING — FMA mul_big delegation                      ║
@@ -54,26 +53,16 @@ template <class Params> struct WasmFmaBackend {
 
     BB_INLINE static constexpr field<Params> mul(const field<Params>& lhs, const field<Params>& rhs) noexcept
     {
-        if (std::is_constant_evaluated()) {
-            return ConstexprFallback::mul(lhs, rhs);
-        }
-        return mul_via_paired_fma_simd(lhs, rhs);
+        field<Params> out;
+        mul_batched<1>({ &lhs }, { &rhs }, { &out });
+        return out;
     }
 
     BB_INLINE static constexpr field<Params> sqr(const field<Params>& x) noexcept
     {
-        if (std::is_constant_evaluated()) {
-            return ConstexprFallback::mul(x, x);
-        }
-        // Dedicated triangular-product FMA squaring kernel. Standalone sqr
-        // still pays for the paired kernel and discards one lane — same shape
-        // as the standalone mul entry point — but the kernel itself is ~41%
-        // cheaper than mul thanks to the a·b = b·a symmetry, so every
-        // .sqr() call benefits (especially the 255-sqr chain in invert()).
-        field<Params> out1;
-        field<Params> out2;
-        sqr_paired_fma_simd(x, x, out1, out2);
-        return out1;
+        field<Params> out;
+        sqr_batched<1>({ &x }, { &out });
+        return out;
     }
 
     // ⚠ WARNING: FMA R=2^264 vs WasmInt29 R=2^261 — cannot delegate here.
@@ -97,7 +86,7 @@ template <class Params> struct WasmFmaBackend {
     // Batched Montgomery mul: outs[i] = as[i] * bs[i] for i in [0, N).
     //
     // Routing:
-    //   N=1  → single-lane mul (SIMD within the kernel).
+    //   N=1  → single mul routed through the paired kernel helper.
     //   N=2  → mul_paired_fma_simd — 2 SIMD lanes, 1 kernel call.
     //   N=3  → noinline helper that force-inlines both mul_paired_fma_simd
     //          and the int29-R264 companion mul into one function body. LLVM
@@ -106,7 +95,8 @@ template <class Params> struct WasmFmaBackend {
     //   N=5  → noinline helper with 2 paired FMAs + 1 int29-R264 mul, all
     //          inlined. Integer sandwiched between the two FMA calls so it
     //          can hide behind the combined FMA latency.
-    //   N≥4 (except 5) → paired FMA for [0,1] + single mul() for [2..N).
+    //   Other N → paired FMA across as many full pairs as possible, with a
+    //              single mul only for an odd tail.
     template <size_t N>
     BB_INLINE static constexpr void mul_batched(std::array<const field<Params>*, N> as,
                                                 std::array<const field<Params>*, N> bs,
@@ -121,7 +111,9 @@ template <class Params> struct WasmFmaBackend {
         if constexpr (N == 0) {
             return;
         } else if constexpr (N == 1) {
-            *outs[0] = mul_via_paired_fma_simd(*as[0], *bs[0]);
+            // A lone multiply cannot amortize the paired-FMA scheduling, so
+            // the int29 companion path is faster here.
+            *outs[0] = IntCompanion::mul(*as[0], *bs[0]);
         } else if constexpr (N == 3) {
             mul_triple_noinline(*as[0], *bs[0], *as[1], *bs[1], *as[2], *bs[2], *outs[0], *outs[1], *outs[2]);
         } else if constexpr (N == 5) {
@@ -141,9 +133,11 @@ template <class Params> struct WasmFmaBackend {
                                *outs[3],
                                *outs[4]);
         } else {
-            mul_paired_fma_simd(*as[0], *bs[0], *as[1], *bs[1], *outs[0], *outs[1]);
-            for (size_t i = 2; i < N; ++i) {
-                *outs[i] = mul_via_paired_fma_simd(*as[i], *bs[i]);
+            for (size_t i = 0; i + 1 < N; i += 2) {
+                mul_paired_fma_simd(*as[i], *bs[i], *as[i + 1], *bs[i + 1], *outs[i], *outs[i + 1]);
+            }
+            if constexpr ((N % 2) == 1) {
+                *outs[N - 1] = mul_via_paired_fma_simd(*as[N - 1], *bs[N - 1]);
             }
         }
     }
@@ -174,10 +168,12 @@ template <class Params> struct WasmFmaBackend {
             sqr_quint_noinline(
                 *as[0], *as[1], *as[2], *as[3], *as[4], *outs[0], *outs[1], *outs[2], *outs[3], *outs[4]);
         } else {
-            sqr_paired_fma_simd(*as[0], *as[1], *outs[0], *outs[1]);
-            for (size_t i = 2; i < N; ++i) {
+            for (size_t i = 0; i + 1 < N; i += 2) {
+                sqr_paired_fma_simd(*as[i], *as[i + 1], *outs[i], *outs[i + 1]);
+            }
+            if constexpr ((N % 2) == 1) {
                 field<Params> scratch;
-                sqr_paired_fma_simd(*as[i], *as[i], *outs[i], scratch);
+                sqr_paired_fma_simd(*as[N - 1], *as[N - 1], *outs[N - 1], scratch);
             }
         }
     }
