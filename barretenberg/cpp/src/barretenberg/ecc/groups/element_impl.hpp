@@ -179,9 +179,15 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
     Fq T1;
     Fq T2;
     Fq::template montgomery_mul_batched<2>({ &other.x, &z }, { &T0, &T0 }, { &T1, &T2 });
-    T1 -= x;       // H = x2*z1^2 - x1
-    T2 *= other.y; // z1^3 * y2 (sequential — depends on pair 1 output)
-    T2 -= y;       // y2*z1^3 - y1
+    T1 -= x; // H = x2*z1^2 - x1
+
+    // Pair 2: T2 = y2*z1^3, T3 = HH = H^2.
+    // T3 is speculatively hoisted above the edge-case branch — the branch discards
+    // it on either exit, and the branch is __builtin_expect(..., 0) so the wasted
+    // paired lane is essentially never hit on random MSM input.
+    Fq T3;
+    Fq::template montgomery_mul_batched<2>({ &T2, &T1 }, { &other.y, &T1 }, { &T2, &T3 });
+    T2 -= y; // y2*z1^3 - y1
 
     if (__builtin_expect(T1.is_zero(), 0)) {
         if (T2.is_zero()) {
@@ -192,35 +198,34 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
         return *this;
     }
 
-    // T2 = 2T2 = 2(y2.z1.z1.z1 - y1) = R
-    // z3 = z1 + H
+    // T2 = 2R = 2(y2*z1^3 - y1); z' = z1 + H
     T2 += T2;
     z += T1;
 
-    // T3 = T1*T1 = HH
-    Fq T3 = T1.sqr();
-
-    // z3 = z3 - z1z1 - HH
+    // T0 = z1^2 + HH (T3 already has HH from Pair 2)
     T0 += T3;
 
-    // z3 = (z1 + H)*(z1 + H)
-    z.self_sqr();
-    z -= T0;
+    // Pair 3: z_sq = (z1 + H)^2, R_sq = R^2. Both are true squarings —
+    // dispatched as the dedicated sqr_paired kernel. R_sq is parked in a temp
+    // so Pair 4 below can still consume the pre-update x.
+    Fq z_sq;
+    Fq R_sq;
+    Fq::template montgomery_sqr_batched<2>({ &z, &T2 }, { &z_sq, &R_sq });
+    z = z_sq - T0; // z3 = (z1 + H)^2 - z1^2 - HH
 
     // T3 = 4HH
     T3 += T3;
     T3 += T3;
 
-    // Pair 2: T1 = T1*T3 (4HHH), T3 = T3*x (4HH*x1)
+    // Pair 4: T1 = T1*T3 (4HHH), T3 = T3*x (4HH*x1)
     Fq::template montgomery_mul_batched<2>({ &T1, &T3 }, { &T3, &x }, { &T1, &T3 });
 
-    T0 = T3 + T3; // 8HH*x1
-    T0 += T1;     // 8HH*x1 + 4HHH
-    x = T2.sqr(); // R^2
-    x -= T0;      // x3 = R^2 - 8HH*x1 - 4HHH
-    T3 -= x;      // 4HH*x1 - x3
+    T0 = T3 + T3;  // 8HH*x1
+    T0 += T1;      // 8HH*x1 + 4HHH
+    x = R_sq - T0; // x3 = R^2 - 8HH*x1 - 4HHH
+    T3 -= x;       // 4HH*x1 - x3
 
-    // Pair 3: T1 = T1*y (4HHH*y1), T3 = T3*T2 (R*(4HH*x1-x3))
+    // Pair 5: T1 = T1*y (4HHH*y1), T3 = T3*T2 (R*(4HH*x1-x3))
     Fq::template montgomery_mul_batched<2>({ &T1, &T3 }, { &y, &T2 }, { &T1, &T3 });
 
     T1 += T1;    // 8HHH*y1
