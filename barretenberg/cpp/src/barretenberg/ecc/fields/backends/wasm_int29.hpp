@@ -213,10 +213,33 @@ template <class Params, unsigned REXP = 9 * 29> struct WasmInt29Backend {
         result_8 += result_0_masked * r_limbs_29.div_r_inv[7];
         result_9 += result_0_masked * r_limbs_29.div_r_inv[8];
     }
+
+    // Phase 3+4 shared by mul/sqr: 8 Yuval reductions, REXP-dependent
+    // final reduce, carry propagation, REXP-dependent output pack. The
+    // product phase populates t0..t16 before this helper runs.
+    BB_INLINE static constexpr field<Params> reduce_and_finalize(uint64_t& t0,
+                                                                 uint64_t& t1,
+                                                                 uint64_t& t2,
+                                                                 uint64_t& t3,
+                                                                 uint64_t& t4,
+                                                                 uint64_t& t5,
+                                                                 uint64_t& t6,
+                                                                 uint64_t& t7,
+                                                                 uint64_t& t8,
+                                                                 uint64_t& t9,
+                                                                 uint64_t& t10,
+                                                                 uint64_t& t11,
+                                                                 uint64_t& t12,
+                                                                 uint64_t& t13,
+                                                                 uint64_t& t14,
+                                                                 uint64_t& t15,
+                                                                 uint64_t& t16) noexcept;
 };
 
-// ── Karatsuba Montgomery multiplication (9×29-bit, 5+4 split, 66 muls) ───
-
+// Karatsuba Montgomery multiplication (5+4 split, 66 muls). 8 Yuval
+// reductions (29-bit each) plus one REXP-dependent final reduce —
+// 29-bit k for REXP=261 (total 2^261), 32-bit k for REXP=264 (total
+// 2^264, output realigned by 3 bits in the pack).
 template <class Params, unsigned REXP>
 constexpr field<Params> WasmInt29Backend<Params, REXP>::mul(const field<Params>& lhs, const field<Params>& rhs) noexcept
 {
@@ -294,70 +317,29 @@ constexpr field<Params> WasmInt29Backend<Params, REXP>::mul(const field<Params>&
     uint64_t temp_15 = ph5;
     uint64_t temp_16 = ph6;
 
-    wasm_reduce_yuval(temp_0, temp_1, temp_2, temp_3, temp_4, temp_5, temp_6, temp_7, temp_8, temp_9);
-    wasm_reduce_yuval(temp_1, temp_2, temp_3, temp_4, temp_5, temp_6, temp_7, temp_8, temp_9, temp_10);
-    wasm_reduce_yuval(temp_2, temp_3, temp_4, temp_5, temp_6, temp_7, temp_8, temp_9, temp_10, temp_11);
-    wasm_reduce_yuval(temp_3, temp_4, temp_5, temp_6, temp_7, temp_8, temp_9, temp_10, temp_11, temp_12);
-    wasm_reduce_yuval(temp_4, temp_5, temp_6, temp_7, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13);
-    wasm_reduce_yuval(temp_5, temp_6, temp_7, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14);
-    wasm_reduce_yuval(temp_6, temp_7, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15);
-    wasm_reduce_yuval(temp_7, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
-
-    if constexpr (REXP == 261) {
-        wasm_reduce(temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
-
-        temp_10 += temp_9 >> LIMB_BITS_29;
-        temp_9 &= MASK_29;
-        temp_11 += temp_10 >> LIMB_BITS_29;
-        temp_10 &= MASK_29;
-        temp_12 += temp_11 >> LIMB_BITS_29;
-        temp_11 &= MASK_29;
-        temp_13 += temp_12 >> LIMB_BITS_29;
-        temp_12 &= MASK_29;
-        temp_14 += temp_13 >> LIMB_BITS_29;
-        temp_13 &= MASK_29;
-        temp_15 += temp_14 >> LIMB_BITS_29;
-        temp_14 &= MASK_29;
-        temp_16 += temp_15 >> LIMB_BITS_29;
-        temp_15 &= MASK_29;
-
-        return { (temp_9 << 0) | (temp_10 << 29) | (temp_11 << 58),
-                 (temp_11 >> 6) | (temp_12 << 23) | (temp_13 << 52),
-                 (temp_13 >> 12) | (temp_14 << 17) | (temp_15 << 46),
-                 (temp_15 >> 18) | (temp_16 << 11) };
-    } else {
-        // REXP = 264: widen the final step to 32 bits so total reduction is
-        // 8·29 + 32 = 264. The "virtual LSB" of the output lives at bit 3
-        // of temp_9 (equivalently bit 32 of temp_8 in the old frame) and
-        // the pack offsets shift from {0,29,58,…} to {0,26,55,84,…}.
-        wasm_reduce_32bit_k(temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
-
-        // Carry-propagate through temp_9..temp_16 (same chain as REXP=261).
-        temp_10 += temp_9 >> LIMB_BITS_29;
-        temp_9 &= MASK_29;
-        temp_11 += temp_10 >> LIMB_BITS_29;
-        temp_10 &= MASK_29;
-        temp_12 += temp_11 >> LIMB_BITS_29;
-        temp_11 &= MASK_29;
-        temp_13 += temp_12 >> LIMB_BITS_29;
-        temp_12 &= MASK_29;
-        temp_14 += temp_13 >> LIMB_BITS_29;
-        temp_13 &= MASK_29;
-        temp_15 += temp_14 >> LIMB_BITS_29;
-        temp_14 &= MASK_29;
-        temp_16 += temp_15 >> LIMB_BITS_29;
-        temp_15 &= MASK_29;
-
-        // Virtual LSB at bit 3 of temp_9 → offsets {0, 26, 55, 84, 113, 142, 171, 200}.
-        return { (temp_9 >> 3) | (temp_10 << 26) | (temp_11 << 55),
-                 (temp_11 >> 9) | (temp_12 << 20) | (temp_13 << 49),
-                 (temp_13 >> 15) | (temp_14 << 14) | (temp_15 << 43),
-                 (temp_15 >> 21) | (temp_16 << 8) };
-    }
+    return reduce_and_finalize(temp_0,
+                               temp_1,
+                               temp_2,
+                               temp_3,
+                               temp_4,
+                               temp_5,
+                               temp_6,
+                               temp_7,
+                               temp_8,
+                               temp_9,
+                               temp_10,
+                               temp_11,
+                               temp_12,
+                               temp_13,
+                               temp_14,
+                               temp_15,
+                               temp_16);
 }
 
-// ── Schoolbook Montgomery squaring (9×29-bit) ────────────────────────────
-
+// Schoolbook Montgomery squaring (triangular). 8 Yuval reductions
+// (29-bit each) plus one REXP-dependent final reduce — 29-bit k for
+// REXP=261 (total 2^261), 32-bit k for REXP=264 (total 2^264, output
+// realigned by 3 bits in the pack).
 template <class Params, unsigned REXP>
 constexpr field<Params> WasmInt29Backend<Params, REXP>::sqr(const field<Params>& x) noexcept
 {
@@ -457,77 +439,104 @@ constexpr field<Params> WasmInt29Backend<Params, REXP>::sqr(const field<Params>&
     temp_15 += (acc << 1);
     temp_16 += left[8] * left[8];
 
-    wasm_reduce_yuval(temp_0, temp_1, temp_2, temp_3, temp_4, temp_5, temp_6, temp_7, temp_8, temp_9);
-    wasm_reduce_yuval(temp_1, temp_2, temp_3, temp_4, temp_5, temp_6, temp_7, temp_8, temp_9, temp_10);
-    wasm_reduce_yuval(temp_2, temp_3, temp_4, temp_5, temp_6, temp_7, temp_8, temp_9, temp_10, temp_11);
-    wasm_reduce_yuval(temp_3, temp_4, temp_5, temp_6, temp_7, temp_8, temp_9, temp_10, temp_11, temp_12);
-    wasm_reduce_yuval(temp_4, temp_5, temp_6, temp_7, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13);
-    wasm_reduce_yuval(temp_5, temp_6, temp_7, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14);
-    wasm_reduce_yuval(temp_6, temp_7, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15);
-    wasm_reduce_yuval(temp_7, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
+    return reduce_and_finalize(temp_0,
+                               temp_1,
+                               temp_2,
+                               temp_3,
+                               temp_4,
+                               temp_5,
+                               temp_6,
+                               temp_7,
+                               temp_8,
+                               temp_9,
+                               temp_10,
+                               temp_11,
+                               temp_12,
+                               temp_13,
+                               temp_14,
+                               temp_15,
+                               temp_16);
+}
+
+// Phase 3+4 shared by mul/sqr: 8 Yuval reductions, REXP-dependent final
+// reduce, carry propagation, REXP-dependent output pack. The product
+// phase populates t0..t16 before this helper runs.
+template <class Params, unsigned REXP>
+constexpr field<Params> WasmInt29Backend<Params, REXP>::reduce_and_finalize(uint64_t& t0,
+                                                                            uint64_t& t1,
+                                                                            uint64_t& t2,
+                                                                            uint64_t& t3,
+                                                                            uint64_t& t4,
+                                                                            uint64_t& t5,
+                                                                            uint64_t& t6,
+                                                                            uint64_t& t7,
+                                                                            uint64_t& t8,
+                                                                            uint64_t& t9,
+                                                                            uint64_t& t10,
+                                                                            uint64_t& t11,
+                                                                            uint64_t& t12,
+                                                                            uint64_t& t13,
+                                                                            uint64_t& t14,
+                                                                            uint64_t& t15,
+                                                                            uint64_t& t16) noexcept
+{
+    wasm_reduce_yuval(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9);
+    wasm_reduce_yuval(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10);
+    wasm_reduce_yuval(t2, t3, t4, t5, t6, t7, t8, t9, t10, t11);
+    wasm_reduce_yuval(t3, t4, t5, t6, t7, t8, t9, t10, t11, t12);
+    wasm_reduce_yuval(t4, t5, t6, t7, t8, t9, t10, t11, t12, t13);
+    wasm_reduce_yuval(t5, t6, t7, t8, t9, t10, t11, t12, t13, t14);
+    wasm_reduce_yuval(t6, t7, t8, t9, t10, t11, t12, t13, t14, t15);
+    wasm_reduce_yuval(t7, t8, t9, t10, t11, t12, t13, t14, t15, t16);
 
     if constexpr (REXP == 261) {
-        wasm_reduce(temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
-
-        temp_10 += temp_9 >> LIMB_BITS_29;
-        temp_9 &= MASK_29;
-        temp_11 += temp_10 >> LIMB_BITS_29;
-        temp_10 &= MASK_29;
-        temp_12 += temp_11 >> LIMB_BITS_29;
-        temp_11 &= MASK_29;
-        temp_13 += temp_12 >> LIMB_BITS_29;
-        temp_12 &= MASK_29;
-        temp_14 += temp_13 >> LIMB_BITS_29;
-        temp_13 &= MASK_29;
-        temp_15 += temp_14 >> LIMB_BITS_29;
-        temp_14 &= MASK_29;
-        temp_16 += temp_15 >> LIMB_BITS_29;
-        temp_15 &= MASK_29;
-
-        return { (temp_9 << 0) | (temp_10 << 29) | (temp_11 << 58),
-                 (temp_11 >> 6) | (temp_12 << 23) | (temp_13 << 52),
-                 (temp_13 >> 12) | (temp_14 << 17) | (temp_15 << 46),
-                 (temp_15 >> 18) | (temp_16 << 11) };
+        wasm_reduce(t8, t9, t10, t11, t12, t13, t14, t15, t16);
+    } else if constexpr (REXP == 264) {
+        wasm_reduce_32bit_k(t8, t9, t10, t11, t12, t13, t14, t15, t16);
     } else {
-        wasm_reduce_32bit_k(temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
+        static_assert(REXP == 261 || REXP == 264, "unsupported REXP for WasmInt29 final reduce");
+    }
 
-        temp_10 += temp_9 >> LIMB_BITS_29;
-        temp_9 &= MASK_29;
-        temp_11 += temp_10 >> LIMB_BITS_29;
-        temp_10 &= MASK_29;
-        temp_12 += temp_11 >> LIMB_BITS_29;
-        temp_11 &= MASK_29;
-        temp_13 += temp_12 >> LIMB_BITS_29;
-        temp_12 &= MASK_29;
-        temp_14 += temp_13 >> LIMB_BITS_29;
-        temp_13 &= MASK_29;
-        temp_15 += temp_14 >> LIMB_BITS_29;
-        temp_14 &= MASK_29;
-        temp_16 += temp_15 >> LIMB_BITS_29;
-        temp_15 &= MASK_29;
+    t10 += t9 >> LIMB_BITS_29;
+    t9 &= MASK_29;
+    t11 += t10 >> LIMB_BITS_29;
+    t10 &= MASK_29;
+    t12 += t11 >> LIMB_BITS_29;
+    t11 &= MASK_29;
+    t13 += t12 >> LIMB_BITS_29;
+    t12 &= MASK_29;
+    t14 += t13 >> LIMB_BITS_29;
+    t13 &= MASK_29;
+    t15 += t14 >> LIMB_BITS_29;
+    t14 &= MASK_29;
+    t16 += t15 >> LIMB_BITS_29;
+    t15 &= MASK_29;
 
-        return { (temp_9 >> 3) | (temp_10 << 26) | (temp_11 << 55),
-                 (temp_11 >> 9) | (temp_12 << 20) | (temp_13 << 49),
-                 (temp_13 >> 15) | (temp_14 << 14) | (temp_15 << 43),
-                 (temp_15 >> 21) | (temp_16 << 8) };
+    if constexpr (REXP == 261) {
+        return { (t9 << 0) | (t10 << 29) | (t11 << 58),
+                 (t11 >> 6) | (t12 << 23) | (t13 << 52),
+                 (t13 >> 12) | (t14 << 17) | (t15 << 46),
+                 (t15 >> 18) | (t16 << 11) };
+    } else if constexpr (REXP == 264) {
+        // Virtual LSB at bit 3 of t9 → offsets {0, 26, 55, 84, 113, 142, 171, 200}.
+        return { (t9 >> 3) | (t10 << 26) | (t11 << 55),
+                 (t11 >> 9) | (t12 << 20) | (t13 << 49),
+                 (t13 >> 15) | (t14 << 14) | (t15 << 43),
+                 (t15 >> 21) | (t16 << 8) };
+    } else {
+        static_assert(REXP == 261 || REXP == 264, "unsupported REXP for WasmInt29 output pack");
     }
 }
 
-// ── Big-modulus Montgomery multiplication (>= 2^254), WASM 29-bit ────────
-//
-// mul_big interleaves reduction with the product phase (9 madd + 9 reduce
-// in lockstep) rather than doing the full product then the full reduction.
-// That chain *cannot* share the REXP = 264 shortcut: widening the final step
-// to 32 bits only works when the preceding Yuval chain divides by 2^232 in
-// one pass. The interleaved path divides by 2^29 after every madd, so all
-// nine steps must be 29-bit. mul_big is therefore only valid for REXP = 261;
-// the FMA backend uses its own constexpr_mont_mul-based big-mul path and
-// never calls mul_big on a 264 instantiation.
+// Big-modulus Montgomery multiplication. 9 interleaved madd+reduce
+// pairs for moduli at MODULUS_TOP_LIMB_LARGE_THRESHOLD or above. The
+// 9th reduce is REXP-dependent — 29-bit k for REXP=261 (total 2^261),
+// 32-bit k for REXP=264 (total 2^264, output realigned by 3 bits before
+// the conditional subtract).
 template <class Params, unsigned REXP>
 constexpr field<Params> WasmInt29Backend<Params, REXP>::mul_big(const field<Params>& lhs,
                                                                 const field<Params>& rhs) noexcept
 {
-    static_assert(REXP == 261, "mul_big is only valid at REXP = 261 (native 29-bit reduction chain)");
     static_assert(field<Params>::modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD);
 
     auto left = wasm_convert(lhs.data);
@@ -568,7 +577,13 @@ constexpr field<Params> WasmInt29Backend<Params, REXP>::mul_big(const field<Para
     wasm_madd(left[7], right, temp_7, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15);
     wasm_reduce(temp_7, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15);
     wasm_madd(left[8], right, temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
-    wasm_reduce(temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
+    if constexpr (REXP == 261) {
+        wasm_reduce(temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
+    } else if constexpr (REXP == 264) {
+        wasm_reduce_32bit_k(temp_8, temp_9, temp_10, temp_11, temp_12, temp_13, temp_14, temp_15, temp_16);
+    } else {
+        static_assert(REXP == 261 || REXP == 264, "unsupported REXP for mul_big final reduce");
+    }
 
     temp_10 += temp_9 >> LIMB_BITS_29;
     temp_9 &= MASK_29;
@@ -586,6 +601,31 @@ constexpr field<Params> WasmInt29Backend<Params, REXP>::mul_big(const field<Para
     temp_15 &= MASK_29;
     temp_17 += temp_16 >> LIMB_BITS_29;
     temp_16 &= MASK_29;
+
+    if constexpr (REXP == 264) {
+        // Realign: the 32-bit final reduce leaves the output's virtual LSB at
+        // bit 3 of temp_9. Shift the limb window down by 3 bits so the
+        // conditional subtract (which expects clean 29-bit limbs aligned at
+        // bit 0 of temp_9) can be reused verbatim.
+        const uint64_t a_0 = ((temp_9 >> 3) | (temp_10 << 26)) & MASK_29;
+        const uint64_t a_1 = ((temp_10 >> 3) | (temp_11 << 26)) & MASK_29;
+        const uint64_t a_2 = ((temp_11 >> 3) | (temp_12 << 26)) & MASK_29;
+        const uint64_t a_3 = ((temp_12 >> 3) | (temp_13 << 26)) & MASK_29;
+        const uint64_t a_4 = ((temp_13 >> 3) | (temp_14 << 26)) & MASK_29;
+        const uint64_t a_5 = ((temp_14 >> 3) | (temp_15 << 26)) & MASK_29;
+        const uint64_t a_6 = ((temp_15 >> 3) | (temp_16 << 26)) & MASK_29;
+        const uint64_t a_7 = ((temp_16 >> 3) | (temp_17 << 26)) & MASK_29;
+        const uint64_t a_8 = (temp_17 >> 3);
+        temp_9 = a_0;
+        temp_10 = a_1;
+        temp_11 = a_2;
+        temp_12 = a_3;
+        temp_13 = a_4;
+        temp_14 = a_5;
+        temp_15 = a_6;
+        temp_16 = a_7;
+        temp_17 = a_8;
+    }
 
     uint64_t r_temp_0;
     uint64_t r_temp_1;

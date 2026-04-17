@@ -11,20 +11,8 @@
 //   sqr          — single sqr, routed through sqr_batched<1>
 //   mul_batched  — N independent muls at once
 //   sqr_batched  — N independent sqrs at once
-//
-// ╔══════════════════════════════════════════════════════════════════════╗
-// ║  ⚠  CORRECTNESS WARNING — FMA mul_big delegation                      ║
-// ╠══════════════════════════════════════════════════════════════════════╣
-// ║  FMA uses R = 2^264 (11 × 24-bit limbs).                              ║
-// ║  mul_big delegates to bb::constexpr_mont_mul, which derives           ║
-// ║  R^{-1} from the platform's R_EXPONENT (= 264 for FMA). Correct but   ║
-// ║  O(256²) per multiply. Acceptable as a stopgap; a dedicated FMA       ║
-// ║  big-modulus kernel is future work.                                   ║
-// ║                                                                       ║
-// ║  wide_mul IS safe to delegate to WasmInt29: it's a raw integer        ║
-// ║  256×256 → 512 multiply — no Montgomery reduction, so R doesn't       ║
-// ║  enter the computation.                                               ║
-// ╚══════════════════════════════════════════════════════════════════════╝
+//   mul_big      — single big-modulus mul, routed to int29 R=264 companion
+//   wide_mul     — raw 256×256 → 512 integer multiply (R-independent)
 
 #if BB_R_LIMB_BITS == 24 && defined(__wasm_simd128__)
 
@@ -64,13 +52,12 @@ template <class Params> struct WasmFmaBackend {
         return out;
     }
 
-    // ⚠ WARNING: FMA R=2^264 vs WasmInt29 R=2^261 — cannot delegate here.
-    //            See big banner comment at top of file.
+
+    // Big-modulus delegation to int29's REXP=264 companion. Same R as the
+    // paired FMA kernel, so outputs are interchangeable.
     BB_INLINE static constexpr field<Params> mul_big(const field<Params>& lhs, const field<Params>& rhs) noexcept
     {
-        // constexpr_mont_mul uses R_EXPONENT (= 264 for FMA builds) — R-aware,
-        // bit-correct. Slow (O(256²)), but FMA has no dedicated big-mul kernel.
-        return constexpr_mont_mul(lhs, rhs);
+        return IntCompanion::mul_big(lhs, rhs);
     }
 
     BB_INLINE static constexpr typename field<Params>::wide_array wide_mul(const field<Params>& lhs,
