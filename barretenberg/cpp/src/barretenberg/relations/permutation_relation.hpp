@@ -79,8 +79,11 @@ template <typename FF_> class UltraPermutationRelationImpl {
         const auto& gamma = ParameterView(params.gamma);
 
         // witness degree 4
-        return (w_1 + id_1 * beta + gamma) * (w_2 + id_2 * beta + gamma) * (w_3 + id_3 * beta + gamma) *
-               (w_4 + id_4 * beta + gamma);
+        // Tree-balanced grouping: (f1 * f2) and (f3 * f4) are independent,
+        // enabling the compiler to issue the two half-products in parallel
+        // before combining them (vs. a strict serial chain).
+        return ((w_1 + id_1 * beta + gamma) * (w_2 + id_2 * beta + gamma)) *
+               ((w_3 + id_3 * beta + gamma) * (w_4 + id_4 * beta + gamma));
     }
 
     template <typename Accumulator, typename AllEntities, typename Parameters>
@@ -103,8 +106,9 @@ template <typename FF_> class UltraPermutationRelationImpl {
         const auto& gamma = ParameterView(params.gamma);
 
         // witness degree 4
-        return (w_1 + sigma_1 * beta + gamma) * (w_2 + sigma_2 * beta + gamma) * (w_3 + sigma_3 * beta + gamma) *
-               (w_4 + sigma_4 * beta + gamma);
+        // Tree-balanced grouping: see compute_grand_product_numerator comment.
+        return ((w_1 + sigma_1 * beta + gamma) * (w_2 + sigma_2 * beta + gamma)) *
+               ((w_3 + sigma_3 * beta + gamma) * (w_4 + sigma_4 * beta + gamma));
     }
 
     /**
