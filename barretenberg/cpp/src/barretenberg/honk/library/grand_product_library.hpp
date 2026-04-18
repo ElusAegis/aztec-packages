@@ -142,9 +142,15 @@ void compute_grand_product(typename Flavor::ProverPolynomials& full_polynomials,
     parallel_for(thread_data.num_threads, [&](size_t thread_idx) {
         const size_t start = thread_data.start[thread_idx];
         const size_t end = thread_data.end[thread_idx];
+        // The numerator and denominator prefix-product chains are independent
+        // (different polynomials, same domain slice). Pair the two muls into a
+        // single W=2 batched kernel per iteration so the WASM-FMA backend uses
+        // mul_paired_fma_simd instead of two W=1 int29 kernels.
         for (size_t i = start; i < end - 1; ++i) {
-            numerator.at(i + 1) *= numerator[i];
-            denominator.at(i + 1) *= denominator[i];
+            FF* num_out = &numerator.at(i + 1);
+            FF* den_out = &denominator.at(i + 1);
+            FF::template montgomery_mul_batched<2>(
+                { num_out, den_out }, { &numerator[i], &denominator[i] }, { num_out, den_out });
         }
         partial_numerators[thread_idx] = numerator[end - 1];
         partial_denominators[thread_idx] = denominator[end - 1];
@@ -164,9 +170,14 @@ void compute_grand_product(typename Flavor::ProverPolynomials& full_polynomials,
                 numerator_scaling *= partial_numerators[j];
                 denominator_scaling *= partial_denominators[j];
             }
+            // Independent scaling muls on numerator and denominator; pair them
+            // into one W=2 batched kernel per iteration.
             for (size_t i = start; i < end; ++i) {
-                numerator.at(i) = numerator[i] * numerator_scaling;
-                denominator.at(i) = denominator[i] * denominator_scaling;
+                FF* num_out = &numerator.at(i);
+                FF* den_out = &denominator.at(i);
+                FF::template montgomery_mul_batched<2>({ &numerator[i], &denominator[i] },
+                                                       { &numerator_scaling, &denominator_scaling },
+                                                       { num_out, den_out });
             }
         }
 
