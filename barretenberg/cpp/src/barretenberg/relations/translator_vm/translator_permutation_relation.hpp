@@ -55,15 +55,10 @@ template <typename FF_> class TranslatorPermutationRelationImpl {
         // First 4 factors use scattered masking (lagrange_masking), last factor uses contiguous masking
         auto chosen_set = lagrange_masking * beta;
         auto chosen_set2 = lagrange_ordered_masking * beta;
-        // Tree-balanced grouping of the first 4 factors: ((f1*f2)*(f3*f4))
-        // gives the compiler two independent half-products before the final
-        // combine, instead of a strict 4-long serial chain. Factor positions
-        // are preserved so masking semantics (lagrange_masking on the first
-        // four, lagrange_ordered_masking on the fifth) remain unchanged.
-        return (((concatenated_range_constraints_0 + chosen_set + gamma) *
-                 (concatenated_range_constraints_1 + chosen_set + gamma)) *
-                ((concatenated_range_constraints_2 + chosen_set + gamma) *
-                 (concatenated_range_constraints_3 + chosen_set + gamma))) *
+        return (concatenated_range_constraints_0 + chosen_set + gamma) *
+               (concatenated_range_constraints_1 + chosen_set + gamma) *
+               (concatenated_range_constraints_2 + chosen_set + gamma) *
+               (concatenated_range_constraints_3 + chosen_set + gamma) *
                (ordered_extra_range_constraints_numerator + chosen_set2 + gamma);
     }
 
@@ -85,11 +80,8 @@ template <typename FF_> class TranslatorPermutationRelationImpl {
         const auto& beta = ParameterView(params.beta);
         // All 5 factors use contiguous masking at the end (lagrange_ordered_masking)
         auto chosen_set = lagrange_ordered_masking * beta;
-        // Tree-balanced grouping of the first 4 factors (see numerator comment).
-        return (((ordered_range_constraints_0 + chosen_set + gamma) *
-                 (ordered_range_constraints_1 + chosen_set + gamma)) *
-                ((ordered_range_constraints_2 + chosen_set + gamma) *
-                 (ordered_range_constraints_3 + chosen_set + gamma))) *
+        return (ordered_range_constraints_0 + chosen_set + gamma) * (ordered_range_constraints_1 + chosen_set + gamma) *
+               (ordered_range_constraints_2 + chosen_set + gamma) * (ordered_range_constraints_3 + chosen_set + gamma) *
                (ordered_range_constraints_4 + chosen_set + gamma);
     }
     /**

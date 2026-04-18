@@ -695,30 +695,7 @@ template <typename Flavor> class SumcheckProver {
         parallel_for(source_view.size(), [&](size_t j) {
             const auto& poly = source_view[j];
             size_t limit = poly.end_index();
-            // Unroll-by-2: each original iteration emits one mul
-            // (round_challenge * (poly[i+1] - poly[i])). Two consecutive
-            // iterations' muls are independent, so pair them through
-            // montgomery_mul_batched<2>. On the WASM-FMA backend this
-            // dispatches to mul_paired_fma_simd (~34.7 ns/mul) instead of
-            // two W=1 int29 muls (~47.7 ns each).
-            size_t i = 0;
-            for (; i + 4 <= limit; i += 4) {
-                const FF a0 = poly[i];
-                const FF a1 = poly[i + 2];
-                const FF d0 = poly[i + 1] - a0;
-                const FF d1 = poly[i + 3] - a1;
-                FF p0;
-                FF p1;
-                FF::template montgomery_mul_batched<2>(
-                    { &round_challenge, &round_challenge }, { &d0, &d1 }, { &p0, &p1 });
-                dest_view[j].at(i >> 1) = a0 + p0;
-                dest_view[j].at((i >> 1) + 1) = a1 + p1;
-            }
-            // Tail: at most one single-pair iteration remains (if limit % 4
-            // was 2 or 3). The original single-mul form handles both the
-            // in-bounds poly[i+1] read (limit % 4 == 2) and the implicit
-            // zero beyond end_index() (limit % 4 == 3; poly[i+1] returns 0).
-            for (; i < limit; i += 2) {
+            for (size_t i = 0; i < limit; i += 2) {
                 dest_view[j].at(i >> 1) = poly[i] + round_challenge * (poly[i + 1] - poly[i]);
             }
             dest_view[j].shrink_end_index((limit / 2) + (limit % 2));
