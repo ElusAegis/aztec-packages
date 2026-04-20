@@ -1,4 +1,5 @@
 #include "fq6.hpp"
+#include "fq_extension_test_helpers.hpp"
 #include <gtest/gtest.h>
 
 using namespace bb;
@@ -54,6 +55,7 @@ TEST(fq6, SubCheckAgainstConstants)
 
 TEST(fq6, MulCheckAgainstConstants)
 {
+    SKIP_IF_FMA_24BIT();
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
     fq6 a{ { { 0xa7e3494fc528b8c8, 0xc8c8906c9682e43f, 0xc6e76fc21152721c, 0x12a4c3ee3ff10dbd },
              { 0x887ce62a3ae2a578, 0x70caee28e1942bac, 0xc1a58242c34ff94f, 0x0b154d910b492542 } },
@@ -100,6 +102,7 @@ TEST(fq6, MulCheckAgainstConstants)
 
 TEST(fq6, SqrCheckAgainstConstants)
 {
+    SKIP_IF_FMA_24BIT();
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
     fq6 a{ { { 0xe337aaa063afce6, 0xff4b5477485eb20, 0xef6dcf13b3855ef8, 0x14554c38da988ece },
              { 0x6a70e65e71431416, 0xd21f95045c45f422, 0x2a17b6c6ff517884, 0x1b01ad6487a3ff16 } },

@@ -1,4 +1,5 @@
 #include "fq12.hpp"
+#include "fq_extension_test_helpers.hpp"
 #include <gtest/gtest.h>
 
 using namespace bb;
@@ -89,6 +90,7 @@ TEST(fq12, SubCheckAgainstConstants)
 
 TEST(fq12, MulCheckAgainstConstants)
 {
+    SKIP_IF_FMA_24BIT();
 
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
     fq12 a = { { { { 0xd43e9f8be859502b, 0x26a42a1a95cee1ef, 0x3d63c085c1892b32, 0x2e5beaf431211a76 },
@@ -174,6 +176,7 @@ TEST(fq12, MulCheckAgainstConstants)
 
 TEST(fq12, SparseMulCheckAgainstConstants)
 {
+    SKIP_IF_FMA_24BIT();
     fq12::ell_coeffs ell;
 
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
@@ -249,6 +252,7 @@ TEST(fq12, SparseMulCheckAgainstConstants)
 
 TEST(fq12, SqrCheckAgainstConstants)
 {
+    SKIP_IF_FMA_24BIT();
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
     fq12 a = { { { { 0xef9d68a7df0715fd, 0xfda8aff4030523cf, 0xd09b1482069c0972, 0x252195422f351b07 },
                    { 0x3192057a31dec453, 0xe1c2dd8879191e47, 0xe90a8a00c9b29c5b, 0x1db75f06dff5dd5e } },

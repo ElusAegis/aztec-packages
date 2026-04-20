@@ -113,9 +113,9 @@ constexpr void uint256_t::wasm_madd(const uint64_t& left_limb,
  * @brief Convert from 4 64-bit limbs to 9 29-bit limbs
  *
  */
-constexpr std::array<uint64_t, WASM_NUM_LIMBS> uint256_t::wasm_convert(const uint64_t* data)
+constexpr std::array<uint64_t, uint256_t::WASM_NUM_LIMBS> uint256_t::wasm_convert(const uint64_t* data)
 {
-    // 0x1fffffff == 2^30 - 1
+    // 0x1fffffff == 2^29 - 1
     return {
         data[0] & 0x1fffffff,         // bits [0, 29) from data[0]
         (data[0] >> 29) & 0x1fffffff, // bits [29, 58) from data[0]

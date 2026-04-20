@@ -437,6 +437,16 @@
       }
     },
     {
+      "name": "wasm-threads-simd",
+      "displayName": "Build for WASM with SIMD + relaxed SIMD",
+      "description": "Same as wasm-threads but enables -msimd128 -mrelaxed-simd for FMA support",
+      "inherits": "wasm-threads",
+      "binaryDir": "build-wasm-threads-simd",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "-DBB_NO_EXCEPTIONS -msimd128 -mrelaxed-simd"
+      }
+    },
+    {
       "name": "wasm-threads-dbg",
       "displayName": "Build for debug WASM",
       "binaryDir": "build-wasm-threads-dbg",
@@ -793,6 +803,16 @@
         "ultra_honk_bench",
         "chonk_bench",
         "bb"
+      ]
+    },
+    {
+      "name": "wasm-threads-simd",
+      "configurePreset": "wasm-threads-simd",
+      "inheritConfigureEnvironment": true,
+      "jobs": 0,
+      "targets": [
+        "ecc_tests",
+        "montmul_bench"
       ]
     },
     {

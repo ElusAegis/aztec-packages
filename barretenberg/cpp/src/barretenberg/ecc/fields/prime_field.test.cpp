@@ -325,6 +325,120 @@ TYPED_TEST(PrimeFieldTest, PowThree)
     EXPECT_EQ(a.pow(uint256_t(3)), a * a * a);
 }
 
+// Cross-check the sliding-window `pow()` against a slow naive reference that
+// multiplies `base` into an accumulator once per set bit scanned from MSB
+// down. If the reference and the production implementation disagree on any of
+// these exponents, the window algorithm is miscomputing a boundary.
+namespace {
+template <typename F> F pow_naive_reference(const F& base, const uint256_t& exponent)
+{
+    if (exponent == uint256_t(0)) {
+        return F::one();
+    }
+    if (base == F::zero()) {
+        return F::zero();
+    }
+    F accumulator = base;
+    const uint64_t msb = exponent.get_msb();
+    for (int i = static_cast<int>(msb) - 1; i >= 0; --i) {
+        accumulator.self_sqr();
+        if (exponent.get_bit(static_cast<uint64_t>(i))) {
+            accumulator *= base;
+        }
+    }
+    return accumulator;
+}
+} // namespace
+
+TYPED_TEST(PrimeFieldTest, PowWindowedMatchesNaiveSmallExponents)
+{
+    using F = TypeParam;
+
+    // Cover the binary-fallback path (exponents too small to warrant the
+    // precompute) plus bit lengths that straddle the crossover.
+    for (uint64_t e = 0; e < 64; ++e) {
+        F a = F::random_element();
+        EXPECT_EQ(a.pow(uint256_t(e)), pow_naive_reference(a, uint256_t(e)));
+    }
+}
+
+TYPED_TEST(PrimeFieldTest, PowWindowedMatchesNaiveRandomLongExponents)
+{
+    using F = TypeParam;
+
+    // Exercise the sliding-window main loop across a wide range of random
+    // 256-bit exponents.
+    for (size_t i = 0; i < 64; ++i) {
+        F a = F::random_element();
+        uint256_t e = engine.get_random_uint256();
+        EXPECT_EQ(a.pow(e), pow_naive_reference(a, e));
+    }
+}
+
+TYPED_TEST(PrimeFieldTest, PowWindowedBoundaryBitPatterns)
+{
+    using F = TypeParam;
+
+    // Pathological exponents that tend to surface off-by-one errors in
+    // sliding-window implementations: powers of two, powers-of-two minus one,
+    // alternating bits, and the specific `modulus - 2` used by Fermat inversion.
+    std::vector<uint256_t> exponents{
+        uint256_t(1),
+        uint256_t(2),
+        uint256_t(15),
+        uint256_t(16),
+        uint256_t(17),
+        uint256_t(31),
+        uint256_t(32),
+        uint256_t(255),
+        uint256_t(256),
+        uint256_t(0xAAAAAAAAAAAAAAAAULL), // alternating 1010...
+        uint256_t(0x5555555555555555ULL), // alternating 0101...
+        F::modulus - uint256_t(2),
+        F::modulus - uint256_t(1),
+    };
+
+    F a = F::random_element();
+    for (const auto& e : exponents) {
+        EXPECT_EQ(a.pow(e), pow_naive_reference(a, e));
+    }
+}
+
+TYPED_TEST(PrimeFieldTest, PowWindowedInvertRoundtrip)
+{
+    using F = TypeParam;
+
+    // Fermat inversion via pow() must agree with F::invert() (which itself
+    // calls pow) and with the direct definition a * a^{-1} = 1.
+    for (size_t i = 0; i < 32; ++i) {
+        F a = F::random_element();
+        F ainv = a.invert();
+        F product = a * ainv;
+        product = product.reduce_once().reduce_once();
+        EXPECT_EQ(product, F::one());
+    }
+}
+
+TYPED_TEST(PrimeFieldTest, PowWindowedZeroAndOneEdgeCases)
+{
+    using F = TypeParam;
+
+    // 0^e = 0 for e > 0 and 0^0 = 1.
+    EXPECT_EQ(F::zero().pow(uint256_t(0)), F::one());
+    EXPECT_EQ(F::zero().pow(uint256_t(1)), F::zero());
+    EXPECT_EQ(F::zero().pow(uint256_t(100)), F::zero());
+    EXPECT_EQ(F::zero().pow(F::modulus - uint256_t(2)), F::zero());
+
+    // 1^e = 1 for any e.
+    EXPECT_EQ(F::one().pow(uint256_t(0)), F::one());
+    EXPECT_EQ(F::one().pow(uint256_t(1)), F::one());
+    EXPECT_EQ(F::one().pow(F::modulus - uint256_t(2)), F::one());
+
+    // a^0 = 1 for any a.
+    F a = F::random_element();
+    EXPECT_EQ(a.pow(uint256_t(0)), F::one());
+}
+
 // ================================
 // Batch Invert (only implemented for prime fields)
 // ================================

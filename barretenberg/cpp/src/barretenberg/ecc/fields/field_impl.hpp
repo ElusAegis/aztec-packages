@@ -28,75 +28,33 @@ namespace bb {
 // clang-format on
 /**
  *
- * Mutiplication
+ * Multiplication — delegates to montgomery_mul which contains all dispatch logic.
  *
  **/
 template <class T> constexpr field<T> field<T>::operator*(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
-        // >= 255-bits or <= 64-bits.
-        return montgomery_mul(other);
-    } else {
-        if (std::is_constant_evaluated()) {
-            return montgomery_mul(other);
-        }
-        field result = asm_mul_with_coarse_reduction(*this, other);
-        result.assert_coarse_form();
-        return result;
-    }
+    return montgomery_mul(other);
 }
 
 template <class T> constexpr field<T>& field<T>::operator*=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
-        // >= 255-bits or <= 64-bits.
-        *this = operator*(other);
-    } else {
-        if (std::is_constant_evaluated()) {
-            *this = operator*(other);
-        } else {
-            asm_self_mul_with_coarse_reduction(*this, other);
-            assert_coarse_form();
-        }
-    }
+    *this = montgomery_mul(other);
     return *this;
 }
 
 /**
  *
- * Squaring
+ * Squaring — delegates to montgomery_square which contains all dispatch logic.
  *
  **/
 template <class T> constexpr field<T> field<T>::sqr() const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
-        return montgomery_square();
-    } else {
-        if (std::is_constant_evaluated()) {
-            return montgomery_square();
-        }
-        field result = asm_sqr_with_coarse_reduction(*this);
-        result.assert_coarse_form();
-        return result;
-    }
+    return montgomery_square();
 }
 
 template <class T> constexpr void field<T>::self_sqr() & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
-        *this = montgomery_square();
-    } else {
-        if (std::is_constant_evaluated()) {
-            *this = montgomery_square();
-        } else {
-            asm_self_sqr_with_coarse_reduction(*this);
-            assert_coarse_form();
-        }
-    }
+    *this = montgomery_square();
 }
 
 /**
@@ -106,8 +64,7 @@ template <class T> constexpr void field<T>::self_sqr() & noexcept
  **/
 template <class T> constexpr field<T> field<T>::operator+(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         return add(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -121,8 +78,7 @@ template <class T> constexpr field<T> field<T>::operator+(const field& other) co
 
 template <class T> constexpr field<T>& field<T>::operator+=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         (*this) = operator+(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -155,8 +111,7 @@ template <class T> constexpr field<T> field<T>::operator++(int) noexcept
  **/
 template <class T> constexpr field<T> field<T>::operator-(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         return subtract(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -180,8 +135,7 @@ template <class T> constexpr field<T> field<T>::operator-() const noexcept
 
 template <class T> constexpr field<T>& field<T>::operator-=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         *this = subtract(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -203,8 +157,7 @@ template <class T> constexpr void field<T>::self_neg() & noexcept
 
 template <class T> constexpr void field<T>::self_conditional_negate(const uint64_t predicate) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         *this = predicate ? -(*this) : *this; // NOLINT
     } else {
         if (std::is_constant_evaluated()) {
@@ -331,10 +284,68 @@ template <class T> constexpr void field<T>::self_from_montgomery_form_reduced() 
     self_reduce_once();
 }
 
+// Batched in-place conversions. Each wraps montgomery_mul_batched<N> with the
+// appropriate constant (one_raw for `from_`, r_squared for `to_`), followed by
+// an optional self_reduce_once pass for the `_reduced` variants. On the WASM
+// FMA-SIMD backend, N=2 maps to the paired f64x2 kernel, cutting the per-slot
+// cost of the MSM scalar pre-/post-pass. Aliasing `outs[i] == xs[i]` is safe:
+// the kernel reads all inputs to locals before writing outputs.
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_to_montgomery_form_batched(std::array<field*, N> xs) noexcept
+{
+    constexpr field r_squared =
+        field{ r_squared_uint.data[0], r_squared_uint.data[1], r_squared_uint.data[2], r_squared_uint.data[3] };
+    std::array<const field*, N> as{};
+    std::array<const field*, N> bs{};
+    std::array<field*, N> outs{};
+    for (size_t i = 0; i < N; ++i) {
+        as[i] = xs[i];
+        bs[i] = &r_squared;
+        outs[i] = xs[i];
+    }
+    montgomery_mul_batched<N>(as, bs, outs);
+}
+
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_from_montgomery_form_batched(std::array<field*, N> xs) noexcept
+{
+    constexpr field one_raw{ 1, 0, 0, 0 };
+    std::array<const field*, N> as{};
+    std::array<const field*, N> bs{};
+    std::array<field*, N> outs{};
+    for (size_t i = 0; i < N; ++i) {
+        as[i] = xs[i];
+        bs[i] = &one_raw;
+        outs[i] = xs[i];
+    }
+    montgomery_mul_batched<N>(as, bs, outs);
+}
+
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_to_montgomery_form_reduced_batched(std::array<field*, N> xs) noexcept
+{
+    self_to_montgomery_form_batched<N>(xs);
+    for (size_t i = 0; i < N; ++i) {
+        xs[i]->self_reduce_once();
+    }
+}
+
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_from_montgomery_form_reduced_batched(std::array<field*, N> xs) noexcept
+{
+    self_from_montgomery_form_batched<N>(xs);
+    for (size_t i = 0; i < N; ++i) {
+        xs[i]->self_reduce_once();
+    }
+}
+
 template <class T> constexpr field<T> field<T>::reduce_once() const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         return reduce();
     } else {
         if (std::is_constant_evaluated()) {
@@ -346,8 +357,7 @@ template <class T> constexpr field<T> field<T>::reduce_once() const noexcept
 
 template <class T> constexpr void field<T>::self_reduce_once() & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         *this = reduce();
     } else {
         if (std::is_constant_evaluated()) {
@@ -358,23 +368,121 @@ template <class T> constexpr void field<T>::self_reduce_once() & noexcept
     }
 }
 
+/**
+ * @brief Exponentiate a field element by an up-to-256-bit integer.
+ *
+ * Uses a 4-bit left-to-right sliding-window algorithm for exponents whose MSB
+ * is large enough to amortize the precomputation (>= WINDOW_SIZE + 2 bits).
+ * Shorter exponents fall back to the classic bit-scan binary algorithm.
+ *
+ * Cost for a 254-bit exponent (e.g. BN254 Fermat inversion, `x^(p-2)`):
+ *   precompute : 1 sqr + 7 muls   (odd powers x^1..x^15)
+ *   main loop  : ~253 sqrs + ~51-63 muls  (average window spacing ~5 bits)
+ *   total      : ~254 sqrs + ~58-70 muls
+ *
+ * vs. the naive binary chain:
+ *   total      : ~253 sqrs + ~127 muls
+ *
+ * Net: ~17% fewer field multiplications per inversion. Within a single chain
+ * the squarings are sequential (x -> x^2 -> x^4 -> ...), so the win is a
+ * reduction in kernel count, not pairing.
+ *
+ * Remains `constexpr`-safe: the 8-entry precompute table is a stack array of
+ * field values, constructed with only basic field ops, so compile-time
+ * evaluation of `pow()` still works (used by e.g. `two_inv` and generator
+ * tables in square-root setup).
+ */
 template <class T> constexpr field<T> field<T>::pow(const uint256_t& exponent) const noexcept
 {
-    field accumulator{ data[0], data[1], data[2], data[3] };
-    field to_mul{ data[0], data[1], data[2], data[3] };
-    const uint64_t maximum_set_bit = exponent.get_msb();
-
-    for (int i = static_cast<int>(maximum_set_bit) - 1; i >= 0; --i) {
-        accumulator.self_sqr();
-        if (exponent.get_bit(static_cast<uint64_t>(i))) {
-            accumulator *= to_mul;
-        }
-    }
+    // Edge cases identical to the previous implementation.
     if (exponent == uint256_t(0)) {
-        accumulator = one();
-    } else if (*this == zero()) {
-        accumulator = zero();
+        return one();
     }
+    if (*this == zero()) {
+        return zero();
+    }
+
+    constexpr size_t WINDOW_SIZE = 4;
+    constexpr size_t TABLE_SIZE = 1UL << (WINDOW_SIZE - 1); // 8 odd powers x^1,x^3,...,x^15
+
+    const uint64_t msb = exponent.get_msb();
+
+    // Fallback to naive binary for short exponents: the 1 sqr + 7 mul precompute
+    // only pays off once the main loop has enough windows to amortize it.
+    // Empirically 2*(TABLE_SIZE-1) + WINDOW_SIZE bits is a safe crossover.
+    if (msb < 2 * (TABLE_SIZE - 1) + WINDOW_SIZE) {
+        field accumulator{ data[0], data[1], data[2], data[3] };
+        const field base{ data[0], data[1], data[2], data[3] };
+        for (int i = static_cast<int>(msb) - 1; i >= 0; --i) {
+            accumulator.self_sqr();
+            if (exponent.get_bit(static_cast<uint64_t>(i))) {
+                accumulator *= base;
+            }
+        }
+        return accumulator;
+    }
+
+    // Precompute odd powers: table[k] = x^(2k+1) for k = 0..TABLE_SIZE-1.
+    // Cost: 1 squaring + (TABLE_SIZE - 1) multiplications.
+    const field x{ data[0], data[1], data[2], data[3] };
+    const field x2 = x.sqr();
+    field table[TABLE_SIZE]{};
+    table[0] = x;
+    for (size_t k = 1; k < TABLE_SIZE; ++k) {
+        table[k] = table[k - 1] * x2;
+    }
+
+    // Left-to-right sliding window. The accumulator is seeded with the
+    // most-significant window instead of starting from `one()`, which skips
+    // the otherwise-wasted leading squarings-on-identity.
+    //
+    // `i` is the current bit index (exponent bit we are about to consume).
+    auto i = static_cast<int>(msb);
+
+    // Extract the leading window: up to WINDOW_SIZE bits starting at the MSB,
+    // trimmed to end on a set bit so the window value is odd.
+    int window_len = (i + 1 < static_cast<int>(WINDOW_SIZE)) ? (i + 1) : static_cast<int>(WINDOW_SIZE);
+    uint64_t window_val = 0;
+    for (int j = 0; j < window_len; ++j) {
+        window_val = (window_val << 1) | (exponent.get_bit(static_cast<uint64_t>(i - j)) ? 1U : 0U);
+    }
+    // Trim trailing zeros so the window represents an odd value.
+    while ((window_val & 1) == 0) {
+        window_val >>= 1;
+        --window_len;
+    }
+    field accumulator = table[(window_val - 1) >> 1];
+    i -= window_len;
+
+    // Main loop: scan remaining bits from MSB to LSB.
+    while (i >= 0) {
+        if (!exponent.get_bit(static_cast<uint64_t>(i))) {
+            accumulator.self_sqr();
+            --i;
+            continue;
+        }
+
+        // Current bit is 1. Look ahead up to (WINDOW_SIZE - 1) more bits to
+        // form the longest window of length <= WINDOW_SIZE whose low bit is 1.
+        int lookahead = (i + 1 < static_cast<int>(WINDOW_SIZE)) ? (i + 1) : static_cast<int>(WINDOW_SIZE);
+        int wl = lookahead;
+        uint64_t wv = 0;
+        for (int j = 0; j < wl; ++j) {
+            wv = (wv << 1) | (exponent.get_bit(static_cast<uint64_t>(i - j)) ? 1U : 0U);
+        }
+        while ((wv & 1) == 0) {
+            wv >>= 1;
+            --wl;
+        }
+
+        // Square `wl` times, then multiply by x^wv.
+        for (int j = 0; j < wl; ++j) {
+            accumulator.self_sqr();
+        }
+        accumulator *= table[(wv - 1) >> 1];
+        i -= wl;
+    }
+
     return accumulator;
 }
 
@@ -703,7 +811,7 @@ template <class T> constexpr field<T> field<T>::tonelli_shanks_sqrt() const noex
 
 template <class T>
 constexpr std::pair<bool, field<T>> field<T>::sqrt() const noexcept
-    requires((T::modulus_0 & 0x3UL) == 0x3UL)
+    requires((T::modulus_uint256.data[0] & 0x3UL) == 0x3UL)
 {
     constexpr uint256_t sqrt_exponent = (modulus + uint256_t(1)) >> 2;
     field root = pow(sqrt_exponent);
@@ -715,7 +823,7 @@ constexpr std::pair<bool, field<T>> field<T>::sqrt() const noexcept
 
 template <class T>
 constexpr std::pair<bool, field<T>> field<T>::sqrt() const noexcept
-    requires((T::modulus_0 & 0x3UL) != 0x3UL)
+    requires((T::modulus_uint256.data[0] & 0x3UL) != 0x3UL)
 {
     field root = tonelli_shanks_sqrt();
     if ((root * root) == (*this)) {
@@ -753,16 +861,13 @@ template <class T> constexpr uint64_t field<T>::is_msb_set_word() const noexcept
 template <class T> constexpr bool field<T>::is_zero() const noexcept
 {
     return ((data[0] | data[1] | data[2] | data[3]) == 0) ||
-           (data[0] == T::modulus_0 && data[1] == T::modulus_1 && data[2] == T::modulus_2 && data[3] == T::modulus_3);
+           (data[0] == T::modulus_uint256.data[0] && data[1] == T::modulus_uint256.data[1] && data[2] == T::modulus_uint256.data[2] && data[3] == T::modulus_uint256.data[3]);
 }
 
 template <class T> constexpr field<T> field<T>::get_root_of_unity(size_t subgroup_size) noexcept
 {
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    field r{ T::primitive_root_0, T::primitive_root_1, T::primitive_root_2, T::primitive_root_3 };
-#else
-    field r{ T::primitive_root_wasm_0, T::primitive_root_wasm_1, T::primitive_root_wasm_2, T::primitive_root_wasm_3 };
-#endif
+    field r{ T::primitive_root_mont.data[0], T::primitive_root_mont.data[1],
+             T::primitive_root_mont.data[2], T::primitive_root_mont.data[3] };
     for (size_t i = primitive_root_log_size(); i > subgroup_size; --i) {
         r.self_sqr();
     }

@@ -32,10 +32,6 @@ namespace bb::numeric {
 class alignas(32) uint256_t {
 
   public:
-#if defined(__wasm__) || !defined(__SIZEOF_INT128__)
-#define WASM_NUM_LIMBS 9
-#define WASM_LIMB_BITS 29
-#endif
     constexpr uint256_t() noexcept
         : data{ 0, 0, 0, 0 }
     {}
@@ -229,6 +225,12 @@ class alignas(32) uint256_t {
     void msgpack_schema(auto& packer) const { packer.pack_alias("uint256_t", "bin32"); }
 
   private:
+    // The WASM bigint helpers below implement a fixed 29-bit/9-limb decomposition.
+    // They are independent from the field Montgomery radix, which may vary by variant.
+#if defined(__wasm__) || !defined(__SIZEOF_INT128__)
+    static constexpr size_t WASM_NUM_LIMBS = 9;
+    static constexpr uint64_t WASM_LIMB_BITS = 29;
+#endif
     [[nodiscard]] static constexpr std::pair<uint64_t, uint64_t> mul_wide(uint64_t a, uint64_t b);
     [[nodiscard]] static constexpr std::pair<uint64_t, uint64_t> addc(uint64_t a, uint64_t b, uint64_t carry_in);
     [[nodiscard]] static constexpr uint64_t addc_discard_hi(uint64_t a, uint64_t b, uint64_t carry_in);

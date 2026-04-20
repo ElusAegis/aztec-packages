@@ -24,24 +24,16 @@ struct G1Params {
     static constexpr bool USE_ENDOMORPHISM = true;
     static constexpr bool can_hash_to_curve = true;
     static constexpr bool has_a = false;
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    static constexpr bb::fr b{ 0xdd7056026000005a, 0x223fa97acb319311, 0xcc388229877910c0, 0x34394632b724eaa };
-#else
-    static constexpr bb::fr b{ 0x2646d52420000b3eUL, 0xf78d5ec872bf8119UL, 0x166fb9c3ec1f6749UL, 0x7a9ef7fabe69506UL };
-#endif
+
+    // Grumpkin: y^2 = x^3 - 17. Canonical b = p - 17 (for BN254 Fr modulus p).
+    static constexpr bb::fr b =
+        bb::fr(uint256_t{ 0x43E1F593EFFFFFF0UL, 0x2833E84879B97091UL, 0xB85045B68181585DUL, 0x30644E72E131A029UL });
     static constexpr bb::fr a{ 0UL, 0UL, 0UL, 0UL };
 
-    // generator point = (x, y) = (1, sqrt(-16)) = (1, -4i)
+    // generator point = (x, y) = (1, sqrt(-16))
     static constexpr bb::fr one_x = bb::fr::one();
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    static constexpr bb::fr one_y{
-        0x11b2dff1448c41d8UL, 0x23d3446f21c77dc3UL, 0xaa7b8cf435dfafbbUL, 0x14b34cf69dc25d68UL
-    };
-#else
-    static constexpr bb::fr one_y{
-        0xc3e285a561883af3UL, 0x6fc5c2360a850101UL, 0xf35e144228647aa9UL, 0x2151a2fe48c68af6UL
-    };
-#endif
+    static constexpr bb::fr one_y =
+        bb::fr(uint256_t{ 0x833FC48D823F272CUL, 0x2D270D45F1181294UL, 0xCF135E7506A45D63UL, 0x0000000000000002UL });
 };
 using g1 = bb::group<bb::fr, bb::fq, G1Params>;
 

@@ -52,12 +52,25 @@ void MSM<Curve>::transform_scalar_and_get_nonzero_scalar_indices(std::span<typen
         }
         std::vector<uint32_t>& thread_scalar_indices = thread_indices[chunk.thread_index];
         thread_scalar_indices.reserve(range.size());
-        for (size_t i : range) {
+        // W=2 unroll: pair two scalar conversions into one montgomery_mul_batched<2>
+        // call, which on WASM-FMA-SIMD lowers to the paired f64x2 kernel.
+        const size_t range_start = range.front();
+        const size_t range_end = range_start + range.size();
+        size_t i = range_start;
+        for (; i + 1 < range_end; i += 2) {
+            BB_ASSERT_DEBUG(i + 1 < scalars.size());
+            ScalarField::template self_from_montgomery_form_reduced_batched<2>({ &scalars[i], &scalars[i + 1] });
+            if (!scalars[i].is_zero()) {
+                thread_scalar_indices.push_back(static_cast<uint32_t>(i));
+            }
+            if (!scalars[i + 1].is_zero()) {
+                thread_scalar_indices.push_back(static_cast<uint32_t>(i + 1));
+            }
+        }
+        if (i < range_end) { // odd tail
             BB_ASSERT_DEBUG(i < scalars.size());
-            auto& scalar = scalars[i];
-            scalar.self_from_montgomery_form_reduced();
-
-            if (!scalar.is_zero()) {
+            scalars[i].self_from_montgomery_form_reduced();
+            if (!scalars[i].is_zero()) {
                 thread_scalar_indices.push_back(static_cast<uint32_t>(i));
             }
         }
@@ -500,7 +513,13 @@ std::vector<typename Curve::AffineElement> MSM<Curve>::batch_multi_scalar_mul(
         BB_BENCH_NAME("MSM::batch_multi_scalar_mul/scalars_to_montgomery");
         for (auto& scalar_span : scalars) {
             parallel_for_range(scalar_span.size(), [&](size_t start, size_t end) {
-                for (size_t i = start; i < end; ++i) {
+                // W=2 unroll: see note on the pre-pass loop above.
+                size_t i = start;
+                for (; i + 1 < end; i += 2) {
+                    ScalarField::template self_to_montgomery_form_batched<2>(
+                        { &scalar_span[i], &scalar_span[i + 1] });
+                }
+                if (i < end) { // odd tail
                     scalar_span[i].self_to_montgomery_form();
                 }
             });
