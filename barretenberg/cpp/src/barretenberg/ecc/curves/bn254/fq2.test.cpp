@@ -12,6 +12,15 @@
 
 using namespace bb;
 
+// When MONTMUL_VARIANT_FMA is defined at compile time, the FMA backend's
+// R = 2^264 must be the live Montgomery radix. Asserting this here prevents
+// the #if BB_R_LIMB_BITS == 24 gated FMA code from silently falling through
+// to the int29 (R = 2^261) branch under a misconfigured build.
+// See bench-wasm/BUILD_NOTES.md ("silent-fallthrough trap").
+#ifdef MONTMUL_VARIANT_FMA
+static_assert(bb::R_EXPONENT == 264, "MONTMUL_VARIANT_FMA requires R=2^264 (FMA backend)");
+#endif
+
 TEST(fq2, MulCheckAgainstConstants)
 {
     SKIP_IF_FMA_24BIT();
