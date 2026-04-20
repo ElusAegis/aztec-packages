@@ -80,11 +80,16 @@ static constexpr uint256_t compute_r_squared(const uint256_t& modulus, unsigned 
 
 // Split uint256_t into NUM_LIMBS limbs of LIMB_BITS bits each (little-endian).
 // When LIMB_BITS == 64, each limb is exactly one word (no masking/spanning needed).
+//
+// The ≥ 255 bound (not 256) is intentional — the RNE backend uses a 5×51-bit
+// internal layout (255 bits) for values that are always < 2^255 by
+// construction (BN254 Fr modulus is < 2^254). Callers with inputs that may
+// actually occupy all 256 bits must pick a limbing that covers ≥ 256 bits.
 template <unsigned LIMB_BITS, unsigned NUM_LIMBS>
 static constexpr std::array<uint64_t, NUM_LIMBS> split_limbs(const uint256_t& v)
 {
     static_assert(LIMB_BITS > 0 && LIMB_BITS <= 64, "LIMB_BITS must be in (0, 64]");
-    static_assert(NUM_LIMBS * LIMB_BITS >= 256, "NUM_LIMBS * LIMB_BITS must cover 256 bits");
+    static_assert(NUM_LIMBS * LIMB_BITS >= 255, "NUM_LIMBS * LIMB_BITS must cover ≥ 255 bits");
     std::array<uint64_t, NUM_LIMBS> limbs{};
     if constexpr (LIMB_BITS == 64) {
         for (unsigned i = 0; i < NUM_LIMBS; ++i) {
@@ -152,6 +157,16 @@ template <unsigned LIMB_BITS, unsigned NUM_LIMBS> struct LimbConstants {
     std::array<double, NUM_LIMBS> modulus_f;
     std::array<double, NUM_LIMBS> div_r_inv_f;
 #endif
+
+#ifdef MONTMUL_VARIANT_RNE
+    // The RNE SIMD montmul keeps external 4×64-bit storage but operates
+    // internally on 5×51-bit limbs via f64x2 FMA. Its 51-bit constants are
+    // invariant to the platform LIMB_BITS/NUM_LIMBS — the arrays are always
+    // sized 5 (51*5 = 255 bits cover the field).
+    std::array<uint64_t, 5> u51_p;              // modulus repacked as 5×51-bit limbs
+    uint64_t u51_np0;                           // -p^{-1} mod 2^51
+    std::array<std::array<uint64_t, 5>, 4> rho; // rho[i-1] = (2^(51*i + 255)) mod p, as 5×51-bit limbs
+#endif
 };
 
 // Factory: compute LimbConstants from a uint256_t modulus.
@@ -165,6 +180,31 @@ static constexpr LimbConstants<LIMB_BITS, NUM_LIMBS> compute_limb_constants(cons
 #ifdef MONTMUL_VARIANT_FMA
     result.modulus_f = to_double_array(result.modulus);
     result.div_r_inv_f = to_double_array(result.div_r_inv);
+#endif
+#ifdef MONTMUL_VARIANT_RNE
+    result.u51_p = split_limbs<51, 5>(modulus);
+    // -p^{-1} mod 2^51 — mask the existing -p^{-1} mod 2^64 down to 51 bits.
+    // Valid because 2^51 | 2^64 and p is odd, so the inverse congruence
+    // p · x ≡ -1 mod 2^64 implies p · (x mod 2^51) ≡ -1 mod 2^51.
+    result.u51_np0 = compute_r_inv(modulus.data[0]) & ((1ULL << 51) - 1);
+    // rho[k-1] = 2^{-51·k} mod p.
+    //
+    // Derivation: smult_noinit(t[i], RHO_{4-i+1}) adds t[i]·RHO at ss[0..5]
+    // which starts at intermediate bit position 204. We want the added term
+    // to represent t[i] at its original bit position 51·i (so that after
+    // Montgomery division by 2^255, the sum gives product · 2^{-255} mod p):
+    //     t[i] · RHO · 2^204 ≡ t[i] · 2^{51·i} mod p
+    //     RHO                ≡ 2^{51·i - 204} mod p
+    //     RHO                ≡ 2^{-51·(4-i)} mod p
+    // Pairing: RHO_k corresponds to t[4-k], so RHO_k = 2^{-51·k} mod p.
+    //
+    // `compute_div_r_inv(p, n)` computes 2^{-n} mod p by repeated halving.
+    // Despite provekit's comment claiming "2^(51·i)·2^255 mod p", the
+    // hardcoded constants match this 2^{-51·k} formula (confirmed by runtime
+    // differential test).
+    for (unsigned k = 1; k <= 4; ++k) {
+        result.rho[k - 1] = split_limbs<51, 5>(compute_div_r_inv(modulus, 51U * k));
+    }
 #endif
     return result;
 }
