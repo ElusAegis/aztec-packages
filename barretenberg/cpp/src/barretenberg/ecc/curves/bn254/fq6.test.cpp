@@ -1,6 +1,15 @@
 #include "fq6.hpp"
+#include "barretenberg/ecc/fields/field_declarations.hpp"
 #include "fq_extension_test_helpers.hpp"
 #include <gtest/gtest.h>
+
+#ifdef MONTMUL_VARIANT_FMA
+// Guarantee the FMA backend is actually compiled in when a build opts into it.
+// See ../../../CLAUDE.md "silent-fallthrough gotcha": the #if BB_R_LIMB_BITS == 24
+// chains in backend code fall through to int29 when the define is missing,
+// yielding a green test that never exercised FMA.
+static_assert(bb::R_EXPONENT == 264, "MONTMUL_VARIANT_FMA build must select the R=2^264 backend");
+#endif
 
 using namespace bb;
 
@@ -186,4 +195,129 @@ TEST(fq6, SparseMul)
     fq6 expected = fq6{ a0, a1, fq2::zero() } * b;
 
     EXPECT_EQ(result, expected);
+}
+
+namespace {
+// Reference implementations reproducing the pre-paired-dispatch Karatsuba
+// formulas bit-for-bit, so the differential tests detect any regression in
+// the new paired path (which issues the same 6 Fq2 muls, just grouped into
+// 3 base_field::montgomery_mul_batched<2> dispatches).
+fq6 reference_fq6_mul(const fq6& a, const fq6& b)
+{
+    fq2 T0 = a.c0 * b.c0;
+    fq2 T1 = a.c1 * b.c1;
+    fq2 T2 = a.c2 * b.c2;
+    fq2 T3 = (a.c0 + a.c2) * (b.c0 + b.c2);
+    fq2 T4 = (a.c0 + a.c1) * (b.c0 + b.c1);
+    fq2 T5 = (a.c1 + a.c2) * (b.c1 + b.c2);
+    return {
+        T0 + fq6::mul_by_non_residue(T5 - (T1 + T2)),
+        T4 - (T0 + T1) + fq6::mul_by_non_residue(T2),
+        T3 + T1 - (T0 + T2),
+    };
+}
+
+fq6 reference_fq6_sqr(const fq6& a)
+{
+    fq2 S0 = a.c0.sqr();
+    fq2 S1 = a.c0 * a.c1;
+    S1 += S1;
+    fq2 S2 = (a.c0 + a.c2 - a.c1).sqr();
+    fq2 S3 = a.c1 * a.c2;
+    S3 += S3;
+    fq2 S4 = a.c2.sqr();
+    return {
+        fq6::mul_by_non_residue(S3) + S0,
+        fq6::mul_by_non_residue(S4) + S1,
+        S1 + S2 + S3 - S0 - S4,
+    };
+}
+} // namespace
+
+TEST(fq6, MulMatchesReferenceRandom)
+{
+    constexpr size_t ITERS = 1024;
+    for (size_t i = 0; i < ITERS; ++i) {
+        fq6 a = fq6::random_element();
+        fq6 b = fq6::random_element();
+        EXPECT_EQ(a * b, reference_fq6_mul(a, b));
+    }
+}
+
+TEST(fq6, SqrMatchesReferenceRandom)
+{
+    constexpr size_t ITERS = 1024;
+    for (size_t i = 0; i < ITERS; ++i) {
+        fq6 a = fq6::random_element();
+        EXPECT_EQ(a.sqr(), reference_fq6_sqr(a));
+    }
+}
+
+TEST(fq6, SqrMatchesMulRandom)
+{
+    // Independent cross-check: sqr(x) must equal x * x for every x.
+    constexpr size_t ITERS = 1024;
+    for (size_t i = 0; i < ITERS; ++i) {
+        fq6 a = fq6::random_element();
+        EXPECT_EQ(a.sqr(), a * a);
+    }
+}
+
+TEST(fq2, MontgomeryMulBatched2MatchesSequential)
+{
+    constexpr size_t ITERS = 1024;
+    for (size_t i = 0; i < ITERS; ++i) {
+        fq2 a0 = fq2::random_element();
+        fq2 a1 = fq2::random_element();
+        fq2 b0 = fq2::random_element();
+        fq2 b1 = fq2::random_element();
+
+        fq2 out0;
+        fq2 out1;
+        fq2::template montgomery_mul_batched<2>({ &a0, &a1 }, { &b0, &b1 }, { &out0, &out1 });
+
+        EXPECT_EQ(out0, a0 * b0);
+        EXPECT_EQ(out1, a1 * b1);
+    }
+}
+
+TEST(fq2, MontgomerySqrBatched2MatchesSequential)
+{
+    constexpr size_t ITERS = 1024;
+    for (size_t i = 0; i < ITERS; ++i) {
+        fq2 a0 = fq2::random_element();
+        fq2 a1 = fq2::random_element();
+
+        fq2 out0;
+        fq2 out1;
+        fq2::template montgomery_sqr_batched<2>({ &a0, &a1 }, { &out0, &out1 });
+
+        EXPECT_EQ(out0, a0.sqr());
+        EXPECT_EQ(out1, a1.sqr());
+    }
+}
+
+TEST(fq2, MontgomeryMulBatched2AliasingInputsOutputs)
+{
+    // Valid use pattern from Fq6: in-place aliasing where outs[i] and as[i]/bs[i]
+    // point to the same storage. The implementation snapshots inputs to locals
+    // before writing outputs; this test pins that contract.
+    constexpr size_t ITERS = 256;
+    for (size_t i = 0; i < ITERS; ++i) {
+        fq2 a0 = fq2::random_element();
+        fq2 a1 = fq2::random_element();
+        fq2 b0 = fq2::random_element();
+        fq2 b1 = fq2::random_element();
+
+        const fq2 expected0 = a0 * b0;
+        const fq2 expected1 = a1 * b1;
+
+        // Self-alias both slots: out == a.
+        fq2 a0_copy = a0;
+        fq2 a1_copy = a1;
+        fq2::template montgomery_mul_batched<2>(
+            { &a0_copy, &a1_copy }, { &b0, &b1 }, { &a0_copy, &a1_copy });
+        EXPECT_EQ(a0_copy, expected0);
+        EXPECT_EQ(a1_copy, expected1);
+    }
 }
