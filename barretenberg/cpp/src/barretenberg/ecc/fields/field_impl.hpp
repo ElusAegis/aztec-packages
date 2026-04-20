@@ -368,23 +368,121 @@ template <class T> constexpr void field<T>::self_reduce_once() & noexcept
     }
 }
 
+/**
+ * @brief Exponentiate a field element by an up-to-256-bit integer.
+ *
+ * Uses a 4-bit left-to-right sliding-window algorithm for exponents whose MSB
+ * is large enough to amortize the precomputation (>= WINDOW_SIZE + 2 bits).
+ * Shorter exponents fall back to the classic bit-scan binary algorithm.
+ *
+ * Cost for a 254-bit exponent (e.g. BN254 Fermat inversion, `x^(p-2)`):
+ *   precompute : 1 sqr + 7 muls   (odd powers x^1..x^15)
+ *   main loop  : ~253 sqrs + ~51-63 muls  (average window spacing ~5 bits)
+ *   total      : ~254 sqrs + ~58-70 muls
+ *
+ * vs. the naive binary chain:
+ *   total      : ~253 sqrs + ~127 muls
+ *
+ * Net: ~17% fewer field multiplications per inversion. Within a single chain
+ * the squarings are sequential (x -> x^2 -> x^4 -> ...), so the win is a
+ * reduction in kernel count, not pairing.
+ *
+ * Remains `constexpr`-safe: the 8-entry precompute table is a stack array of
+ * field values, constructed with only basic field ops, so compile-time
+ * evaluation of `pow()` still works (used by e.g. `two_inv` and generator
+ * tables in square-root setup).
+ */
 template <class T> constexpr field<T> field<T>::pow(const uint256_t& exponent) const noexcept
 {
-    field accumulator{ data[0], data[1], data[2], data[3] };
-    field to_mul{ data[0], data[1], data[2], data[3] };
-    const uint64_t maximum_set_bit = exponent.get_msb();
-
-    for (int i = static_cast<int>(maximum_set_bit) - 1; i >= 0; --i) {
-        accumulator.self_sqr();
-        if (exponent.get_bit(static_cast<uint64_t>(i))) {
-            accumulator *= to_mul;
-        }
-    }
+    // Edge cases identical to the previous implementation.
     if (exponent == uint256_t(0)) {
-        accumulator = one();
-    } else if (*this == zero()) {
-        accumulator = zero();
+        return one();
     }
+    if (*this == zero()) {
+        return zero();
+    }
+
+    constexpr size_t WINDOW_SIZE = 4;
+    constexpr size_t TABLE_SIZE = 1UL << (WINDOW_SIZE - 1); // 8 odd powers x^1,x^3,...,x^15
+
+    const uint64_t msb = exponent.get_msb();
+
+    // Fallback to naive binary for short exponents: the 1 sqr + 7 mul precompute
+    // only pays off once the main loop has enough windows to amortize it.
+    // Empirically 2*(TABLE_SIZE-1) + WINDOW_SIZE bits is a safe crossover.
+    if (msb < 2 * (TABLE_SIZE - 1) + WINDOW_SIZE) {
+        field accumulator{ data[0], data[1], data[2], data[3] };
+        const field base{ data[0], data[1], data[2], data[3] };
+        for (int i = static_cast<int>(msb) - 1; i >= 0; --i) {
+            accumulator.self_sqr();
+            if (exponent.get_bit(static_cast<uint64_t>(i))) {
+                accumulator *= base;
+            }
+        }
+        return accumulator;
+    }
+
+    // Precompute odd powers: table[k] = x^(2k+1) for k = 0..TABLE_SIZE-1.
+    // Cost: 1 squaring + (TABLE_SIZE - 1) multiplications.
+    const field x{ data[0], data[1], data[2], data[3] };
+    const field x2 = x.sqr();
+    field table[TABLE_SIZE]{};
+    table[0] = x;
+    for (size_t k = 1; k < TABLE_SIZE; ++k) {
+        table[k] = table[k - 1] * x2;
+    }
+
+    // Left-to-right sliding window. The accumulator is seeded with the
+    // most-significant window instead of starting from `one()`, which skips
+    // the otherwise-wasted leading squarings-on-identity.
+    //
+    // `i` is the current bit index (exponent bit we are about to consume).
+    auto i = static_cast<int>(msb);
+
+    // Extract the leading window: up to WINDOW_SIZE bits starting at the MSB,
+    // trimmed to end on a set bit so the window value is odd.
+    int window_len = (i + 1 < static_cast<int>(WINDOW_SIZE)) ? (i + 1) : static_cast<int>(WINDOW_SIZE);
+    uint64_t window_val = 0;
+    for (int j = 0; j < window_len; ++j) {
+        window_val = (window_val << 1) | (exponent.get_bit(static_cast<uint64_t>(i - j)) ? 1U : 0U);
+    }
+    // Trim trailing zeros so the window represents an odd value.
+    while ((window_val & 1) == 0) {
+        window_val >>= 1;
+        --window_len;
+    }
+    field accumulator = table[(window_val - 1) >> 1];
+    i -= window_len;
+
+    // Main loop: scan remaining bits from MSB to LSB.
+    while (i >= 0) {
+        if (!exponent.get_bit(static_cast<uint64_t>(i))) {
+            accumulator.self_sqr();
+            --i;
+            continue;
+        }
+
+        // Current bit is 1. Look ahead up to (WINDOW_SIZE - 1) more bits to
+        // form the longest window of length <= WINDOW_SIZE whose low bit is 1.
+        int lookahead = (i + 1 < static_cast<int>(WINDOW_SIZE)) ? (i + 1) : static_cast<int>(WINDOW_SIZE);
+        int wl = lookahead;
+        uint64_t wv = 0;
+        for (int j = 0; j < wl; ++j) {
+            wv = (wv << 1) | (exponent.get_bit(static_cast<uint64_t>(i - j)) ? 1U : 0U);
+        }
+        while ((wv & 1) == 0) {
+            wv >>= 1;
+            --wl;
+        }
+
+        // Square `wl` times, then multiply by x^wv.
+        for (int j = 0; j < wl; ++j) {
+            accumulator.self_sqr();
+        }
+        accumulator *= table[(wv - 1) >> 1];
+        i -= wl;
+    }
+
     return accumulator;
 }
 
