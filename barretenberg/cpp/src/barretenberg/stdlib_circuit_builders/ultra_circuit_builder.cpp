@@ -1962,9 +1962,7 @@ template <typename ExecutionTrace> msgpack::sbuffer UltraCircuitBuilder_<Executi
     using base = CircuitBuilderBase<FF>;
     CircuitSchemaInternal<FF> cir;
 
-    std::array<uint64_t, 4> modulus = {
-        FF::Params::modulus_0, FF::Params::modulus_1, FF::Params::modulus_2, FF::Params::modulus_3
-    };
+    const auto& modulus = FF::modulus.data;
     std::stringstream buf;
     buf << std::hex << std::setfill('0') << std::setw(16) << modulus[3] << std::setw(16) << modulus[2] << std::setw(16)
         << modulus[1] << std::setw(16) << modulus[0];

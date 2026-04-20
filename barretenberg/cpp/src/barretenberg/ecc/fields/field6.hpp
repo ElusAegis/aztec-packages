@@ -91,14 +91,35 @@ template <typename base_field, typename Fq6Params> class field6 {
     {
         // /* Devegili OhEig Scott Dahab --- Multiplication and Squaring on Pairing-Friendly Fields.pdf; Section 4
         //  * (Karatsuba) */
+        //
+        // The 6 Fq2 muls T0..T5 are all independent: inputs are combinations of
+        // `this` and `other` coefficients, never outputs of a prior Fq2 mul.
+        // We group them into 3 pairs and dispatch via
+        // base_field::montgomery_mul_batched<2> so that on the WASM FMA-SIMD
+        // backend each pair co-schedules as 3 W=2 Fp-level paired kernels
+        // (vs 3 W=1 Fp singles per solo Fq2 mul). Net per-Fq6-mul Fp-kernel
+        // count drops from 18 W=1 to 9 W=2.
 
-        base_field T0 = c0 * other.c0;
-        base_field T1 = c1 * other.c1;
-        base_field T2 = c2 * other.c2;
+        const base_field c0_plus_c2 = c0 + c2;
+        const base_field c0_plus_c1 = c0 + c1;
+        const base_field c1_plus_c2 = c1 + c2;
+        const base_field oc0_plus_oc2 = other.c0 + other.c2;
+        const base_field oc0_plus_oc1 = other.c0 + other.c1;
+        const base_field oc1_plus_oc2 = other.c1 + other.c2;
 
-        base_field T3 = (c0 + c2) * (other.c0 + other.c2);
-        base_field T4 = (c0 + c1) * (other.c0 + other.c1);
-        base_field T5 = (c1 + c2) * (other.c1 + other.c2);
+        base_field T0;
+        base_field T1;
+        base_field::template montgomery_mul_batched<2>({ &c0, &c1 }, { &other.c0, &other.c1 }, { &T0, &T1 });
+
+        base_field T2;
+        base_field T3;
+        base_field::template montgomery_mul_batched<2>(
+            { &c2, &c0_plus_c2 }, { &other.c2, &oc0_plus_oc2 }, { &T2, &T3 });
+
+        base_field T4;
+        base_field T5;
+        base_field::template montgomery_mul_batched<2>(
+            { &c0_plus_c1, &c1_plus_c2 }, { &oc0_plus_oc1, &oc1_plus_oc2 }, { &T4, &T5 });
 
         return {
             T0 + mul_by_non_residue(T5 - (T1 + T2)),
@@ -113,13 +134,25 @@ template <typename base_field, typename Fq6Params> class field6 {
     {
         /* Devegili OhEig Scott Dahab --- Multiplication and Squaring on Pairing-Friendly Fields.pdf; Section 4
          * (CH-SQR2) */
-        base_field S0 = c0.sqr();
-        base_field S1 = c0 * c1;
+        //
+        // CH-SQR2 uses 3 Fq2 sqrs (S0, S2, S4) and 2 Fq2 muls (S1, S3).
+        // All 5 are independent, so we pair the squares S0 and S4 (same-kind
+        // batched dispatch) and pair the two Fq2 muls S1 = c0*c1 / S3 = c1*c2.
+        // S2 remains a solo Fq2 sqr. Net savings on the WASM-FMA backend:
+        // the two paired Fq2 ops each collapse 6 W=1 Fp singles into
+        // 3 W=2 Fp pairs inside the Fq2-level paired dispatch.
+
+        base_field S0;
+        base_field S4;
+        base_field::template montgomery_sqr_batched<2>({ &c0, &c2 }, { &S0, &S4 });
+
+        base_field S1;
+        base_field S3;
+        base_field::template montgomery_mul_batched<2>({ &c0, &c1 }, { &c1, &c2 }, { &S1, &S3 });
         S1 += S1;
-        base_field S2 = (c0 + c2 - c1).sqr();
-        base_field S3 = c1 * c2;
         S3 += S3;
-        base_field S4 = c2.sqr();
+
+        base_field S2 = (c0 + c2 - c1).sqr();
         return {
             mul_by_non_residue(S3) + S0,
             mul_by_non_residue(S4) + S1,

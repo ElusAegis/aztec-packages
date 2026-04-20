@@ -7,6 +7,7 @@
 #pragma once
 
 #include "barretenberg/numeric/uint256/uint256.hpp"
+#include <array>
 
 // forward declare RNG
 namespace bb::numeric {
@@ -92,6 +93,126 @@ template <class base_field, class Params> struct alignas(32) field2 {
     constexpr bool operator!=(const field2& other) const noexcept { return !(*this == other); }
     constexpr field2 sqr() const noexcept;
     constexpr void self_sqr() noexcept;
+
+    // Batched multiplication: *outs[i] = *as[i] * *bs[i] for i in [0, N).
+    //
+    // For N=2, the 6 independent Fp muls inside two Fq2 Karatsuba mults are
+    // co-scheduled as 3 paired Fp-level montgomery_mul_batched<2> dispatches
+    // (two base products per slot + one cross-term per slot). On the WASM
+    // FMA-SIMD backend this issues 3 f64x2 paired kernels instead of 6 W=1
+    // singles, cutting the per-Fq2-mul cost materially. Fq6 Karatsuba mul
+    // issues 6 independent Fq2 muls in 3 pairs, the intended caller.
+    //
+    // For N=1 or N>=3, falls back to sequential Fq2 muls (each of which is
+    // 3 sequential Fp muls via operator*).
+    //
+    // Exists so that element_impl.hpp can call Fq::montgomery_mul_batched
+    // uniformly across Fq and Fq2 base fields.
+    template <size_t N>
+    BB_INLINE static constexpr void montgomery_mul_batched(std::array<const field2*, N> as,
+                                                           std::array<const field2*, N> bs,
+                                                           std::array<field2*, N> outs) noexcept
+    {
+        if constexpr (N == 2) {
+            // Assumes -1 is not a quadratic residue (same invariant as operator*).
+            static_assert((base_field::modulus.data[0] & 0x3UL) == 0x3UL);
+
+            // Snapshot inputs into locals first. Aliasing between any input pointer
+            // and any output pointer is legal at the caller; the reads must happen
+            // before we start writing into *outs.
+            const base_field a0c0 = as[0]->c0;
+            const base_field a0c1 = as[0]->c1;
+            const base_field a1c0 = as[1]->c0;
+            const base_field a1c1 = as[1]->c1;
+            const base_field b0c0 = bs[0]->c0;
+            const base_field b0c1 = bs[0]->c1;
+            const base_field b1c0 = bs[1]->c0;
+            const base_field b1c1 = bs[1]->c1;
+
+            // Precompute cross-term sums (Fq2 add = two Fp adds, no mul).
+            const base_field a0_sum = a0c0 + a0c1;
+            const base_field a1_sum = a1c0 + a1c1;
+            const base_field b0_sum = b0c0 + b0c1;
+            const base_field b1_sum = b1c0 + b1c1;
+
+            // Pair 1: c0 * other.c0 for both slots.
+            base_field t1_0;
+            base_field t1_1;
+            base_field::template montgomery_mul_batched<2>(
+                { &a0c0, &a1c0 }, { &b0c0, &b1c0 }, { &t1_0, &t1_1 });
+
+            // Pair 2: c1 * other.c1 for both slots.
+            base_field t2_0;
+            base_field t2_1;
+            base_field::template montgomery_mul_batched<2>(
+                { &a0c1, &a1c1 }, { &b0c1, &b1c1 }, { &t2_0, &t2_1 });
+
+            // Pair 3: (c0+c1) * (other.c0+other.c1) for both slots.
+            base_field t3_0;
+            base_field t3_1;
+            base_field::template montgomery_mul_batched<2>(
+                { &a0_sum, &a1_sum }, { &b0_sum, &b1_sum }, { &t3_0, &t3_1 });
+
+            // Reconstruct. Matches operator*'s formula exactly:
+            //   c0 = t1 - t2,  c1 = t3 - (t1 + t2)
+            *outs[0] = field2{ t1_0 - t2_0, t3_0 - (t1_0 + t2_0) };
+            *outs[1] = field2{ t1_1 - t2_1, t3_1 - (t1_1 + t2_1) };
+        } else {
+            for (size_t i = 0; i < N; ++i) {
+                *outs[i] = *as[i] * *bs[i];
+            }
+        }
+    }
+
+    // Batched squaring: *outs[i] = *as[i]^2 for i in [0, N).
+    //
+    // For N=2, the 4 independent Fp muls inside two Fq2 complex-squarings are
+    // co-scheduled as 2 paired Fp-level montgomery_mul_batched<2> dispatches
+    // (one "norm" pair (c0+c1)(c0-c1) and one "cross" pair c0*c1). On the
+    // WASM FMA-SIMD backend this issues 2 f64x2 paired kernels instead of
+    // 4 W=1 singles.
+    //
+    // For N=1 or N>=3, falls back to sequential Fq2 squares.
+    //
+    // Exists so element_impl.hpp can call Fq::montgomery_sqr_batched
+    // uniformly (analogous to montgomery_mul_batched above).
+    template <size_t N>
+    BB_INLINE static constexpr void montgomery_sqr_batched(std::array<const field2*, N> as,
+                                                           std::array<field2*, N> outs) noexcept
+    {
+        if constexpr (N == 2) {
+            // Snapshot inputs before writing outputs (aliasing-safe).
+            const base_field a0c0 = as[0]->c0;
+            const base_field a0c1 = as[0]->c1;
+            const base_field a1c0 = as[1]->c0;
+            const base_field a1c1 = as[1]->c1;
+
+            // Norm factors: (c0+c1) and (c0-c1).
+            const base_field a0_sum = a0c0 + a0c1;
+            const base_field a0_diff = a0c0 - a0c1;
+            const base_field a1_sum = a1c0 + a1c1;
+            const base_field a1_diff = a1c0 - a1c1;
+
+            // Pair 1: (c0+c1)*(c0-c1) for both slots.
+            base_field norm_0;
+            base_field norm_1;
+            base_field::template montgomery_mul_batched<2>(
+                { &a0_sum, &a1_sum }, { &a0_diff, &a1_diff }, { &norm_0, &norm_1 });
+
+            // Pair 2: c0 * c1 for both slots (will be doubled below).
+            base_field cross_0;
+            base_field cross_1;
+            base_field::template montgomery_mul_batched<2>(
+                { &a0c0, &a1c0 }, { &a0c1, &a1c1 }, { &cross_0, &cross_1 });
+
+            *outs[0] = field2{ norm_0, cross_0 + cross_0 };
+            *outs[1] = field2{ norm_1, cross_1 + cross_1 };
+        } else {
+            for (size_t i = 0; i < N; ++i) {
+                *outs[i] = as[i]->sqr();
+            }
+        }
+    }
 
     constexpr field2 pow(const uint256_t& exponent) const noexcept;
     constexpr field2 pow(uint64_t exponent) const noexcept;
