@@ -212,6 +212,13 @@ constexpr std::optional<affine_element<Fq, Fr, T>> affine_element<Fq, Fr, T>::de
  * @param attempt_count
  * @return constexpr affine_element<Fq, Fr, T>
  */
+// GCC 13 false positives: -Wstringop-overflow and -Warray-bounds on std::vector operations
+// inlined through hash_to_curve -> derive_generators.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 template <class Fq, class Fr, class T>
 affine_element<Fq, Fr, T> affine_element<Fq, Fr, T>::hash_to_curve(const std::vector<uint8_t>& seed,
                                                                    uint8_t attempt_count) noexcept
@@ -220,9 +227,7 @@ affine_element<Fq, Fr, T> affine_element<Fq, Fr, T>::hash_to_curve(const std::ve
     std::vector<uint8_t> target_seed(seed);
     // expand by 2 bytes to cover incremental hash attempts
     const size_t seed_size = seed.size();
-    for (size_t i = 0; i < 2; ++i) {
-        target_seed.push_back(0);
-    }
+    target_seed.resize(seed_size + 2, 0);
     target_seed[seed_size] = attempt_count;
     target_seed[seed_size + 1] = 0;
     const auto hash_hi = blake3::blake3s_constexpr(&target_seed[0], target_seed.size());
@@ -252,6 +257,9 @@ affine_element<Fq, Fr, T> affine_element<Fq, Fr, T>::hash_to_curve(const std::ve
     }
     return hash_to_curve(seed, attempt_count + 1);
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 template <typename Fq, typename Fr, typename T>
 affine_element<Fq, Fr, T> affine_element<Fq, Fr, T>::random_element(numeric::RNG* engine) noexcept

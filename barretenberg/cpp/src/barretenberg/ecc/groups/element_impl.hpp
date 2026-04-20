@@ -91,61 +91,60 @@ template <class Fq, class Fr, class T> constexpr void element<Fq, Fr, T>::self_d
         }
     }
 
-    // T0 = x*x
-    Fq T0 = x.sqr();
+    // Scheduled as 2 paired squarings + 1 paired mul + 1 single (vs. 7 singles).
+    // Pairs 1 and 2 are pure squaring pairs (both lanes compute a²), so they
+    // route to the triangular-product sqr_paired kernel (~41% fewer FMAs per
+    // lane than mul_paired). Pair 3 is mixed (mul + sqr) and stays on
+    // mul_paired — no independent sqr partner available at that point.
 
-    // T1 = y*y
-    Fq T1 = y.sqr();
+    // Pair 1: (x², y²) — the two independent input-coordinate squarings.
+    Fq T0;
+    Fq T1;
+    Fq::template montgomery_sqr_batched<2>({ &x, &y }, { &T0, &T1 });
 
-    // T2 = T1*T1 = y*y*y*y
-    Fq T2 = T1.sqr();
+    // Pair 2: (T1², (T1 + x)²) — the two downstream squarings both depend on
+    // T1 but not on each other.
+    Fq T1_plus_x = T1 + x;
+    Fq T2;
+    Fq T1_sq2;
+    Fq::template montgomery_sqr_batched<2>({ &T1, &T1_plus_x }, { &T2, &T1_sq2 });
 
-    // T1 = T1 + x = x + y*y
-    T1 += x;
-
-    // T1 = T1 * T1
-    T1.self_sqr();
-
-    // T3 = T0 + T2 = xx + y*y*y*y
+    // T3 = T0 + T2;  T1 = T1_sq2 - T3;  T1 += T1;  // T1 = 4*S
     Fq T3 = T0 + T2;
-
-    // T1 = T1 - T3 = x*x + y*y*y*y + 2*x*x*y*y*y*y - x*x - y*y*y*y = 2*x*x*y*y*y*y = 2*S
-    T1 -= T3;
-
-    // T1 = 2T1 = 4*S
+    T1 = T1_sq2 - T3;
     T1 += T1;
 
-    // T3 = 3T0
+    // T3 = 3*T0
     T3 = T0 + T0;
     T3 += T0;
     if constexpr (T::has_a) {
+        // Not on the BN254/Grumpkin MSM hot path (has_a is false there).
+        // Kept sequential; dedicated pairing is future work if needed.
         T3 += (T::a * z.sqr().sqr());
     }
 
-    // z2 = 2*y*z
-    z += z;
-    z *= y;
+    // Pair 3: (z_doubled · y, T3²) — the final mul and sqr are independent
+    // once T3 (= 3*T0 [+ a*z⁴]) is known.
+    Fq z_doubled = z + z;
+    Fq new_z;
+    Fq x_new;
+    Fq::template montgomery_mul_batched<2>({ &z_doubled, &T3 }, { &y, &T3 }, { &new_z, &x_new });
 
-    // T0 = 2T1
-    T0 = T1 + T1;
+    // x = x_new - 2*T1
+    Fq twoT1 = T1 + T1;
+    x = x_new - twoT1;
 
-    // x2 = T3*T3
-    x = T3.sqr();
-
-    // x2 = x2 - 2T1
-    x -= T0;
-
-    // T2 = 8T2
+    // T2 = 8*T2
     T2 += T2;
     T2 += T2;
     T2 += T2;
 
-    // y2 = T1 - x2
-    y = T1 - x;
-
-    // y2 = y2 * T3 - T2
-    y *= T3;
+    // y = (T1 - x) * T3 - T2 — last mul stays single (nothing left to pair).
+    Fq y_pre = T1 - x;
+    y = y_pre * T3;
     y -= T2;
+
+    z = new_z;
 }
 
 template <class Fq, class Fr, class T> constexpr element<Fq, Fr, T> element<Fq, Fr, T>::dbl() const noexcept
@@ -173,18 +172,22 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
         }
     }
 
-    // T0 = z1.z1
+    // T0 = z1^2
     Fq T0 = z.sqr();
 
-    // T1 = x2.t0 - x1 = x2.z1.z1 - x1
-    Fq T1 = other.x * T0;
-    T1 -= x;
+    // Pair 1: T1 = other.x * T0, T2 = z * T0 (both use T0 = z1^2)
+    Fq T1;
+    Fq T2;
+    Fq::template montgomery_mul_batched<2>({ &other.x, &z }, { &T0, &T0 }, { &T1, &T2 });
+    T1 -= x; // H = x2*z1^2 - x1
 
-    // T2 = T0.z1 = z1.z1.z1
-    // T2 = T2.y2 - y1 = y2.z1.z1.z1 - y1
-    Fq T2 = z * T0;
-    T2 *= other.y;
-    T2 -= y;
+    // Pair 2: T2 = y2*z1^3, T3 = HH = H^2.
+    // T3 is speculatively hoisted above the edge-case branch — the branch discards
+    // it on either exit, and the branch is __builtin_expect(..., 0) so the wasted
+    // paired lane is essentially never hit on random MSM input.
+    Fq T3;
+    Fq::template montgomery_mul_batched<2>({ &T2, &T1 }, { &other.y, &T1 }, { &T2, &T3 });
+    T2 -= y; // y2*z1^3 - y1
 
     if (__builtin_expect(T1.is_zero(), 0)) {
         if (T2.is_zero()) {
@@ -195,52 +198,38 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const affine_element
         return *this;
     }
 
-    // T2 = 2T2 = 2(y2.z1.z1.z1 - y1) = R
-    // z3 = z1 + H
+    // T2 = 2R = 2(y2*z1^3 - y1); z' = z1 + H
     T2 += T2;
     z += T1;
 
-    // T3 = T1*T1 = HH
-    Fq T3 = T1.sqr();
-
-    // z3 = z3 - z1z1 - HH
+    // T0 = z1^2 + HH (T3 already has HH from Pair 2)
     T0 += T3;
 
-    // z3 = (z1 + H)*(z1 + H)
-    z.self_sqr();
-    z -= T0;
+    // Pair 3: z_sq = (z1 + H)^2, R_sq = R^2. Both are true squarings —
+    // dispatched as the dedicated sqr_paired kernel. R_sq is parked in a temp
+    // so Pair 4 below can still consume the pre-update x.
+    Fq z_sq;
+    Fq R_sq;
+    Fq::template montgomery_sqr_batched<2>({ &z, &T2 }, { &z_sq, &R_sq });
+    z = z_sq - T0; // z3 = (z1 + H)^2 - z1^2 - HH
 
     // T3 = 4HH
     T3 += T3;
     T3 += T3;
 
-    // T1 = T1*T3 = 4HHH
-    T1 *= T3;
+    // Pair 4: T1 = T1*T3 (4HHH), T3 = T3*x (4HH*x1)
+    Fq::template montgomery_mul_batched<2>({ &T1, &T3 }, { &T3, &x }, { &T1, &T3 });
 
-    // T3 = T3 * x1 = 4HH*x1
-    T3 *= x;
+    T0 = T3 + T3;  // 8HH*x1
+    T0 += T1;      // 8HH*x1 + 4HHH
+    x = R_sq - T0; // x3 = R^2 - 8HH*x1 - 4HHH
+    T3 -= x;       // 4HH*x1 - x3
 
-    // T0 = 2T3
-    T0 = T3 + T3;
+    // Pair 5: T1 = T1*y (4HHH*y1), T3 = T3*T2 (R*(4HH*x1-x3))
+    Fq::template montgomery_mul_batched<2>({ &T1, &T3 }, { &y, &T2 }, { &T1, &T3 });
 
-    // T0 = T0 + T1 = 2(4HH*x1) + 4HHH
-    T0 += T1;
-    x = T2.sqr();
-
-    // x3 = x3 - T0 = R*R - 8HH*x1 -4HHH
-    x -= T0;
-
-    // T3 = T3 - x3 = 4HH*x1 - x3
-    T3 -= x;
-
-    T1 *= y;
-    T1 += T1;
-
-    // T3 = T2 * T3 = R*(4HH*x1 - x3)
-    T3 *= T2;
-
-    // y3 = T3 - T1
-    y = T3 - T1;
+    T1 += T1;    // 8HHH*y1
+    y = T3 - T1; // y3 = R*(4HH*x1-x3) - 8HHH*y1
     return *this;
 }
 
@@ -297,19 +286,73 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
             return *this;
         }
     }
-    Fq Z1Z1(z.sqr());
-    Fq Z2Z2(other.z.sqr());
-    Fq S2(Z1Z1 * z);
-    Fq U2(Z1Z1 * other.x);
-    S2 *= other.y;
-    Fq U1(Z2Z2 * x);
-    Fq S1(Z2Z2 * other.z);
-    S1 *= y;
+    // Jacobian + Jacobian addition, scheduled as eight paired Montgomery
+    // kernel calls (16 logical muls/sqrs, zero single-kernel calls).
+    //
+    // Baseline: sqr (Z1Z1, Z2Z2); mul (S2=Z1Z1·z, U2=Z1Z1·ox, S2·=oy, U1=Z2Z2·x,
+    //   S1=Z2Z2·oz, S1·=y); sqr (I=(2H)²); mul (J=H·I, U1·=I); sqr (x=F²);
+    //   mul (J·=S1); mul (y·=F); sqr ((z+oz)²); mul (z·=H).
+    //
+    // The schedule below pairs all 16 ops across 8 paired kernel invocations.
+    // Pair 1 is a pure-square pair and routes to sqr_paired (triangular kernel,
+    // ~41% cheaper than mul). Pairs 4, 5, 7 mix one mul with one sqr; since no
+    // two independent sqrs are simultaneously available without breaking the
+    // mul dependency chain, those stay on mul_paired (the sqr lane benefits
+    // transparently via WasmFmaBackend's internal sqr(x)=mul(x,x) routing).
+    //
+    // Data-flow exploits: z and Z1Z1 are dead after Pair 2 (allowing us to fold
+    // `z += other.z` and `Z1Z1 += Z2Z2` early), and op15 (z² = (z+oz)²) and
+    // op9 (I²) can run speculatively because they never overflow even on the
+    // H==0 edge-case path (which is ~never hit for random MSM inputs).
 
-    Fq F(S2 - S1);
+    // Pair 1: (z², other.z²) — pure squaring pair, routes to the sqr-batched
+    // triangular-product kernel (~41% fewer FMAs per lane than mul-batched).
+    Fq Z1Z1;
+    Fq Z2Z2;
+    Fq::template montgomery_sqr_batched<2>({ &z, &other.z }, { &Z1Z1, &Z2Z2 });
 
+    // Pair 2: (Z1Z1·z, Z1Z1·other.x)
+    Fq S2;
+    Fq U2;
+    Fq::template montgomery_mul_batched<2>({ &Z1Z1, &Z1Z1 }, { &z, &other.x }, { &S2, &U2 });
+
+    // Precompute (z + other.z) and (Z1Z1 + Z2Z2) into locals so *this stays
+    // intact if we bail out to self_dbl() / self_set_infinity() on the edge
+    // case below. Both feed the final z-update: z = ((z+oz)² - (Z1Z1+Z2Z2)) · H.
+    Fq z_sum = z + other.z;
+    Fq Z_sum = Z1Z1 + Z2Z2;
+
+    // Pair 3: (S2·other.y, Z2Z2·x)  — S2 output aliases S2 input (safe: the
+    // batched kernel reads all inputs to locals before writing any output)
+    Fq U1;
+    Fq::template montgomery_mul_batched<2>({ &S2, &Z2Z2 }, { &other.y, &x }, { &S2, &U1 });
+
+    // H and 2H are ready as soon as U1 is.
     Fq H(U2 - U1);
+    Fq twoH = H + H;
 
+    // Pair 4: (Z2Z2·other.z, (z+oz)²) — z_sum² is speculative w.r.t. the H==0
+    // edge case but is always numerically safe (never overflows).
+    Fq S1_pre;
+    Fq z_sq;
+    Fq::template montgomery_mul_batched<2>({ &Z2Z2, &z_sum }, { &other.z, &z_sum }, { &S1_pre, &z_sq });
+
+    // z's remaining subtraction before the final mul.
+    Fq z_after_sub = z_sq - Z_sum;
+
+    // Pair 5: (S1·y, (2H)²) — (2H)² is also speculative but safe.
+    Fq S1;
+    Fq I_var;
+    Fq::template montgomery_mul_batched<2>({ &S1_pre, &twoH }, { &y, &twoH }, { &S1, &I_var });
+
+    // F and 2F are ready as soon as S1 is (original code's `F += F`).
+    Fq F(S2 - S1);
+    Fq twoF = F + F;
+
+    // Edge case: H == 0 means the two points share an x-coordinate.
+    // F == 0 ⇒ P == Q (doubling); F != 0 ⇒ P == -Q (infinity).
+    // Pairs 4 and 5 computed (z+oz)² and (2H)² speculatively; that work is
+    // wasted here but H==0 is astronomically rare for random MSM inputs.
     if (__builtin_expect(H.is_zero(), 0)) {
         if (F.is_zero()) {
             self_dbl();
@@ -319,38 +362,31 @@ constexpr element<Fq, Fr, T> element<Fq, Fr, T>::operator+=(const element& other
         return *this;
     }
 
-    F += F;
+    // Pair 6: (H·I, U1·I)
+    Fq J;
+    Fq U1_new;
+    Fq::template montgomery_mul_batched<2>({ &H, &U1 }, { &I_var, &I_var }, { &J, &U1_new });
 
-    Fq I(H + H);
-    I.self_sqr();
+    // U2 update = 2·U1_new + J (all adds).
+    Fq U2_sum = U1_new + U1_new;
+    U2_sum += J;
 
-    Fq J(H * I);
+    // Pair 7: ((2F)², z_after_sub·H) — final x squaring fused with final z mul.
+    Fq x_F_sq;
+    Fq z_new;
+    Fq::template montgomery_mul_batched<2>({ &twoF, &z_after_sub }, { &twoF, &H }, { &x_F_sq, &z_new });
 
-    U1 *= I;
+    x = x_F_sq - U2_sum;
+    Fq y_pre = U1_new - x;
 
-    U2 = U1 + U1;
-    U2 += J;
+    // Pair 8: (J·S1, y_pre·(2F))
+    Fq J_S1;
+    Fq y_mul;
+    Fq::template montgomery_mul_batched<2>({ &J, &y_pre }, { &S1, &twoF }, { &J_S1, &y_mul });
 
-    x = F.sqr();
-
-    x -= U2;
-
-    J *= S1;
-    J += J;
-
-    y = U1 - x;
-
-    y *= F;
-
-    y -= J;
-
-    z += other.z;
-
-    Z1Z1 += Z2Z2;
-
-    z.self_sqr();
-    z -= Z1Z1;
-    z *= H;
+    Fq J_doubled = J_S1 + J_S1;
+    y = y_mul - J_doubled;
+    z = z_new;
     return *this;
 }
 
@@ -687,13 +723,20 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
 {
     Fq batch_inversion_accumulator = Fq::one();
 
-    // Forward pass: accumulate (x2 - x1) products for batch inversion
+    // Forward pass: accumulate (x2 - x1) products for batch inversion.
+    // The two multiplications below both read the *current* value of
+    // batch_inversion_accumulator, so they are independent and can be fused
+    // into a single paired Montgomery multiply (2 SIMD lanes per kernel call).
     for (size_t i = 0; i < num_points; i += 2) {
         scratch_space[i >> 1] = points[i].x + points[i + 1].x; // x1 + x2 (saved for later)
         points[i + 1].x -= points[i].x;                        // x2 - x1
         points[i + 1].y -= points[i].y;                        // y2 - y1
-        points[i + 1].y *= batch_inversion_accumulator;
-        batch_inversion_accumulator *= points[i + 1].x;
+        // Pair: points[i+1].y = points[i+1].y * acc;  acc = acc * points[i+1].x
+        // (Both use the old acc; output aliasing is safe — the batched kernel
+        //  reads all inputs into locals before writing any output.)
+        Fq::template montgomery_mul_batched<2>({ &points[i + 1].y, &batch_inversion_accumulator },
+                                               { &batch_inversion_accumulator, &points[i + 1].x },
+                                               { &points[i + 1].y, &batch_inversion_accumulator });
     }
 
     if (batch_inversion_accumulator == Fq::zero()) {
@@ -701,26 +744,114 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
     }
     batch_inversion_accumulator = batch_inversion_accumulator.invert();
 
-    // Backward pass: complete inversions and compute additions
-    for (size_t i = num_points - 2; i < num_points; i -= 2) {
-        // lambda = (y2 - y1) / (x2 - x1)
-        points[i + 1].y *= batch_inversion_accumulator;
-        batch_inversion_accumulator *= points[i + 1].x;
-        points[i + 1].x = points[i + 1].y.sqr();
-        // x3 = lambda^2 - (x1 + x2)
-        points[(i + num_points) >> 1].x = points[i + 1].x - scratch_space[i >> 1];
+    // Backward pass: complete inversions and compute additions — unrolled by 2.
+    //
+    // Each iteration of the single-pair form emits three kernels after the
+    // inversion accumulator update:
+    //   A: paired mul  (λ = (y2-y1)·acc;  acc *= (x2-x1))   — SERIAL on acc
+    //   B: single sqr  (λ²)                                 — local to the iteration
+    //   C: single mul  ((x1-x3)·λ)                          — local to the iteration
+    //
+    // A is a strict recurrence on batch_inversion_accumulator and stays the
+    // critical path. B and C depend only on the iteration's local λ, so
+    // across two adjacent iterations (hi and lo = hi − 2) they are
+    // independent and pair:
+    //   B_hi, B_lo → one sqr_paired<2>
+    //   C_hi, C_lo → one mul_paired<2>
+    // Per 2 iterations: 4 kernels (all paired) vs 6 before (2 paired + 4 singles).
+    //
+    // Tail: if num_points / 2 is odd, the remaining single pair falls back
+    // to the original 3-kernel form.
+    size_t i = num_points;
+    while (i >= 4) {
+        // Two adjacent pairs per step, high-index first (matches the
+        // original loop's descending order of consumption).
+        const size_t hi = i - 2; // lhs index of the higher pair
+        const size_t lo = i - 4; // lhs index of the lower pair
+        const size_t hi_out = (hi + num_points) >> 1;
+        const size_t lo_out = (lo + num_points) >> 1;
+        const size_t hi_scratch = hi >> 1;
+        const size_t lo_scratch = lo >> 1;
 
-        if (i >= 2) {
-            __builtin_prefetch(points + i - 2);
-            __builtin_prefetch(points + i - 1);
-            __builtin_prefetch(points + ((i + num_points - 2) >> 1));
-            __builtin_prefetch(scratch_space + ((i - 2) >> 1));
+        // A_hi — critical-path paired mul: λ_hi = (y2-y1)_hi · acc_in,  acc *= (x2-x1)_hi.
+        Fq::template montgomery_mul_batched<2>({ &points[hi + 1].y, &batch_inversion_accumulator },
+                                               { &batch_inversion_accumulator, &points[hi + 1].x },
+                                               { &points[hi + 1].y, &batch_inversion_accumulator });
+
+        // A_lo — critical-path paired mul: λ_lo = (y2-y1)_lo · acc_after_hi,  acc *= (x2-x1)_lo.
+        // Must follow A_hi (serial on batch_inversion_accumulator).
+        Fq::template montgomery_mul_batched<2>({ &points[lo + 1].y, &batch_inversion_accumulator },
+                                               { &batch_inversion_accumulator, &points[lo + 1].x },
+                                               { &points[lo + 1].y, &batch_inversion_accumulator });
+        // Now: points[hi+1].y == λ_hi  and  points[lo+1].y == λ_lo.
+
+        // B_pair — paired squaring of the two lambdas. Output to locals, NOT
+        // to points[hi+1].x / points[lo+1].x directly, because the output
+        // slot for pair `lo` (lo_out = (lo+N)/2) equals `hi` for adjacent
+        // pairs — writing x3_lo to points[lo_out].x would clobber x1_hi
+        // before the C_pair mul below needs it. Staging in locals makes the
+        // two pairs' writes independent of each other's reads.
+        Fq lambda_sq_hi;
+        Fq lambda_sq_lo;
+        Fq::template montgomery_sqr_batched<2>({ &points[hi + 1].y, &points[lo + 1].y },
+                                               { &lambda_sq_hi, &lambda_sq_lo });
+
+        // x3 = λ² − (x1 + x2). Subtractions into locals.
+        const Fq x3_hi = lambda_sq_hi - scratch_space[hi_scratch];
+        const Fq x3_lo = lambda_sq_lo - scratch_space[lo_scratch];
+
+        // (x1 − x3) into locals — captured BEFORE any output write touches
+        // points[hi].x or points[lo].x.
+        const Fq x_diff_hi = points[hi].x - x3_hi;
+        const Fq x_diff_lo = points[lo].x - x3_lo;
+
+        // Prefetch the next unrolled step's working set (pairs at i−6 and i−8).
+        // Matches the single-iter loop's 4-prefetches-per-iteration density.
+        if (i >= 8) {
+            __builtin_prefetch(points + (i - 6));
+            __builtin_prefetch(points + (i - 5));
+            __builtin_prefetch(points + (i - 8));
+            __builtin_prefetch(points + (i - 7));
+            __builtin_prefetch(points + ((i + num_points - 6) >> 1));
+            __builtin_prefetch(points + ((i + num_points - 8) >> 1));
+            __builtin_prefetch(scratch_space + ((i - 6) >> 1));
+            __builtin_prefetch(scratch_space + ((i - 8) >> 1));
         }
 
-        // y3 = lambda * (x1 - x3) - y1
-        points[i].x -= points[(i + num_points) >> 1].x;
-        points[i].x *= points[i + 1].y;
-        points[(i + num_points) >> 1].y = points[i].x - points[i].y;
+        // C_pair — paired mul: {(x1−x3)_hi · λ_hi,  (x1−x3)_lo · λ_lo} into locals.
+        Fq prod_hi;
+        Fq prod_lo;
+        Fq::template montgomery_mul_batched<2>({ &x_diff_hi, &x_diff_lo },
+                                               { &points[hi + 1].y, &points[lo + 1].y },
+                                               { &prod_hi, &prod_lo });
+
+        // y3 = (x1 − x3) · λ − y1. Read lhs.y BEFORE the output .y writes
+        // (for adjacent pairs, points[lo_out].y aliases points[hi].y).
+        const Fq y3_hi = prod_hi - points[hi].y;
+        const Fq y3_lo = prod_lo - points[lo].y;
+
+        // All inputs captured; commit outputs. Order within each .x / .y
+        // pair is irrelevant now — locals break the aliasing.
+        points[hi_out].x = x3_hi;
+        points[lo_out].x = x3_lo;
+        points[hi_out].y = y3_hi;
+        points[lo_out].y = y3_lo;
+
+        i -= 4;
+    }
+
+    // Tail: at most one pair remains (lhs index 0). This happens iff
+    // num_points / 2 was odd. No cross-iteration partner is available,
+    // so fall back to the original 3-kernel single-pair form.
+    if (i == 2) {
+        Fq::template montgomery_mul_batched<2>({ &points[1].y, &batch_inversion_accumulator },
+                                               { &batch_inversion_accumulator, &points[1].x },
+                                               { &points[1].y, &batch_inversion_accumulator });
+        points[1].x = points[1].y.sqr();
+        points[num_points >> 1].x = points[1].x - scratch_space[0];
+        points[0].x -= points[num_points >> 1].x;
+        points[0].x *= points[1].y;
+        points[num_points >> 1].y = points[0].x - points[0].y;
     }
 }
 

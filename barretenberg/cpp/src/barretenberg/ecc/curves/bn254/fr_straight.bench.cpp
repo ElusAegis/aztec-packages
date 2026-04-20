@@ -25,15 +25,6 @@ void asm_conditional_negate(State& state) noexcept
 }
 BENCHMARK(asm_conditional_negate);
 
-void asm_mul_with_coarse_reduction(State& state) noexcept
-{
-    fr x, y;
-    for (auto _ : state) {
-        DoNotOptimize(fr::asm_mul_with_coarse_reduction(x, y));
-    }
-}
-BENCHMARK(asm_mul_with_coarse_reduction);
-
 void asm_reduce_once(State& state) noexcept
 {
     fr x;
@@ -52,15 +43,6 @@ void asm_self_add_with_coarse_reduction(State& state) noexcept
 }
 BENCHMARK(asm_self_add_with_coarse_reduction);
 
-void asm_self_mul_with_coarse_reduction(State& state) noexcept
-{
-    fr x, y;
-    for (auto _ : state) {
-        fr::asm_self_mul_with_coarse_reduction(x, y);
-    }
-}
-BENCHMARK(asm_self_mul_with_coarse_reduction);
-
 void asm_self_reduce_once(State& state) noexcept
 {
     fr x;
@@ -70,15 +52,6 @@ void asm_self_reduce_once(State& state) noexcept
 }
 BENCHMARK(asm_self_reduce_once);
 
-void asm_self_sqr_with_coarse_reduction(State& state) noexcept
-{
-    fr x;
-    for (auto _ : state) {
-        fr::asm_self_sqr_with_coarse_reduction(x);
-    }
-}
-BENCHMARK(asm_self_sqr_with_coarse_reduction);
-
 void asm_self_sub_with_coarse_reduction(State& state) noexcept
 {
     fr x, y;
@@ -87,15 +60,6 @@ void asm_self_sub_with_coarse_reduction(State& state) noexcept
     }
 }
 BENCHMARK(asm_self_sub_with_coarse_reduction);
-
-void asm_sqr_with_coarse_reduction(State& state) noexcept
-{
-    fr x;
-    for (auto _ : state) {
-        DoNotOptimize(fr::asm_sqr_with_coarse_reduction(x));
-    }
-}
-BENCHMARK(asm_sqr_with_coarse_reduction);
 
 void mul(State& state) noexcept
 {

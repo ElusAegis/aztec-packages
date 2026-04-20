@@ -6,6 +6,8 @@
 
 namespace bb::starknet::stark252 {
 
+// TODO: unify stark252 constants via constexpr R_EXPONENT + auto-derivation
+// (same pattern as bn254/secp256k1/secp256r1 in field_constexpr_helpers.hpp)
 struct FqParams {
     static constexpr uint64_t modulus_0 = 0x0000000000000001ULL;
     static constexpr uint64_t modulus_1 = 0x0000000000000000ULL;
