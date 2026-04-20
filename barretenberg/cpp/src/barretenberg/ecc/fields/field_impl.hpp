@@ -15,6 +15,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "./bn254_fermat_addchain.hpp"
 #include "./field_declarations.hpp"
 #include "barretenberg/numeric/uint256/uint256.hpp"
 
@@ -398,7 +399,18 @@ template <class T> constexpr field<T> field<T>::invert() const noexcept
     if (*this == zero()) {
         bb::assert_failure("Trying to invert zero in the field");
     }
-    return pow(modulus_minus_two);
+    // Fast path for the two BN254 primes: a hand-tuned straight-line addition
+    // chain, ~74 Montgomery kernels cheaper per inversion than `pow(r-2)` /
+    // `pow(q-2)`. See `bn254_fermat_addchain.hpp` for provenance and op counts.
+    if constexpr (detail::bn254_fermat_addchain::params_modulus_equals<T>(
+                      detail::bn254_fermat_addchain::bn254_fr_modulus)) {
+        return detail::bn254_fermat_addchain::invert_bn254_fr(*this);
+    } else if constexpr (detail::bn254_fermat_addchain::params_modulus_equals<T>(
+                             detail::bn254_fermat_addchain::bn254_fq_modulus)) {
+        return detail::bn254_fermat_addchain::invert_bn254_fq(*this);
+    } else {
+        return pow(modulus_minus_two);
+    }
 }
 
 template <class T> void field<T>::batch_invert(field* coeffs, const size_t n) noexcept
