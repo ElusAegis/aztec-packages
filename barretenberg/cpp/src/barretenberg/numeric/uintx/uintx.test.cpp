@@ -116,10 +116,7 @@ TEST(uintx, DISABLEDMulmod)
             uint256_t(a); // { a_converted.data[0], a_converted.data[1], a_converted.data[2], a_converted.data[3] };
         uint256_t b_uint =
             uint256_t(b); // { b_converted.data[0], b_converted.data[1], b_converted.data[2], b_converted.data[3] };
-        uint256_t modulus_uint{ bb::Bn254FqParams::modulus_0,
-                                Bn254FqParams::modulus_1,
-                                Bn254FqParams::modulus_2,
-                                Bn254FqParams::modulus_3 };
+        uint256_t modulus_uint = bb::Bn254FqParams::modulus_uint256;
         uint1024_t a_uintx = uint1024_t(uint512_t(a_uint));
         uint1024_t b_uintx = uint1024_t(uint512_t(b_uint));
         uint1024_t modulus_uintx = uint1024_t(uint512_t(modulus_uint));

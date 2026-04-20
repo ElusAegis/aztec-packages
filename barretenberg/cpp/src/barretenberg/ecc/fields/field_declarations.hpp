@@ -11,6 +11,7 @@
 #include "barretenberg/numeric/random/engine.hpp"
 #include "barretenberg/numeric/uint128/uint128.hpp"
 #include "barretenberg/numeric/uint256/uint256.hpp"
+#include "field_constexpr_helpers.hpp"
 #include <array>
 #include <cstdint>
 #include <iostream>
@@ -69,11 +70,6 @@ template <class Params_> struct alignas(32) field {
 
     // The number of element required to represent field<Params_> in the public inputs of a circuit
     static constexpr size_t PUBLIC_INPUTS_SIZE = Params::PUBLIC_INPUTS_SIZE;
-
-#if defined(__wasm__) || !defined(__SIZEOF_INT128__)
-#define WASM_NUM_LIMBS 9
-#define WASM_LIMB_BITS 29
-#endif
 
     // We don't initialize data in the default constructor since we'd lose a lot of time on huge array initializations.
     // Other alternatives have been noted, such as casting to get around constructors where they matter,
@@ -231,40 +227,27 @@ template <class Params_> struct alignas(32) field {
     constexpr ~field() noexcept = default;
     alignas(32) uint64_t data[4]; // NOLINT
 
-    static constexpr uint256_t modulus =
-        uint256_t{ Params::modulus_0, Params::modulus_1, Params::modulus_2, Params::modulus_3 };
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    static constexpr uint256_t r_squared_uint{
-        Params_::r_squared_0, Params_::r_squared_1, Params_::r_squared_2, Params_::r_squared_3
-    };
-#else
-    static constexpr uint256_t r_squared_uint{
-        Params_::r_squared_wasm_0, Params_::r_squared_wasm_1, Params_::r_squared_wasm_2, Params_::r_squared_wasm_3
-    };
-    static constexpr std::array<uint64_t, 9> wasm_modulus = { Params::modulus_wasm_0, Params::modulus_wasm_1,
-                                                              Params::modulus_wasm_2, Params::modulus_wasm_3,
-                                                              Params::modulus_wasm_4, Params::modulus_wasm_5,
-                                                              Params::modulus_wasm_6, Params::modulus_wasm_7,
-                                                              Params::modulus_wasm_8 };
-    static constexpr std::array<uint64_t, 9> wasm_r_inv = {
-        Params::r_inv_wasm_0, Params::r_inv_wasm_1, Params::r_inv_wasm_2, Params::r_inv_wasm_3, Params::r_inv_wasm_4,
-        Params::r_inv_wasm_5, Params::r_inv_wasm_6, Params::r_inv_wasm_7, Params::r_inv_wasm_8
-    };
+    static constexpr uint256_t modulus = Params::modulus_uint256;
+    // R^2 mod p — used to convert elements into Montgomery form (multiply by R^2, reduce)
+    static constexpr uint256_t r_squared_uint = Params_::r_squared_uint256;
 
-#endif
+    // Modulus and 2^{-R_LIMB_BITS} mod p, split into R_NUM_LIMBS limbs of R_LIMB_BITS bits.
+    // On native (64-bit limbs), these are just the 4 uint64_t words of the modulus.
+    // On WASM (29-bit limbs), these are the 9 sub-word limbs used by the schoolbook montmul.
+    static constexpr auto r_limbs = compute_r_limb_constants(Params::modulus_uint256);
+
+    // Use generic (non-asm) arithmetic: no BMI2 asm, large modulus (>= 2^254), or tiny modulus (<= 64 bits).
+    static constexpr bool use_generic_arithmetic =
+        BBERG_NO_ASM || (modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
+        (modulus.data[1] == 0 && modulus.data[2] == 0 && modulus.data[3] == 0);
+
     static constexpr field cube_root_of_unity()
     {
-        // endomorphism i.e. lambda * [P] = (beta * x, y)
-        if constexpr (Params::cube_root_0 != 0) {
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-            constexpr field result{
-                Params::cube_root_0, Params::cube_root_1, Params::cube_root_2, Params::cube_root_3
-            };
-#else
-            constexpr field result{
-                Params::cube_root_wasm_0, Params::cube_root_wasm_1, Params::cube_root_wasm_2, Params::cube_root_wasm_3
-            };
-#endif
+        if constexpr (Params::cube_root_mont != uint256_t(0)) {
+            constexpr field result{ Params::cube_root_mont.data[0],
+                                    Params::cube_root_mont.data[1],
+                                    Params::cube_root_mont.data[2],
+                                    Params::cube_root_mont.data[3] };
             return result;
         } else {
             constexpr field two_inv = field(2).invert();
@@ -280,22 +263,10 @@ template <class Params_> struct alignas(32) field {
 
     static constexpr field coset_generator()
     {
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-        const field result{
-            Params::coset_generator_0,
-            Params::coset_generator_1,
-            Params::coset_generator_2,
-            Params::coset_generator_3,
-        };
-#else
-        const field result{
-            Params::coset_generator_0,
-            Params::coset_generator_1,
-            Params::coset_generator_2,
-            Params::coset_generator_3,
-        };
-#endif
-
+        const field result{ Params::coset_generator_mont.data[0],
+                            Params::coset_generator_mont.data[1],
+                            Params::coset_generator_mont.data[2],
+                            Params::coset_generator_mont.data[3] };
         return result;
     }
 
@@ -335,10 +306,7 @@ template <class Params_> struct alignas(32) field {
 
     BB_INLINE constexpr field pow(const uint256_t& exponent) const noexcept;
     BB_INLINE constexpr field pow(uint64_t exponent) const noexcept;
-    // STARKNET: next line was commented as stark252 violates the assertion
-    // static_assert(Params::modulus_0 != 1);
-    static constexpr uint256_t modulus_minus_two =
-        uint256_t(Params::modulus_0 - 2ULL, Params::modulus_1, Params::modulus_2, Params::modulus_3);
+    static constexpr uint256_t modulus_minus_two = modulus - uint256_t(2);
     constexpr field invert() const noexcept;
     template <typename C>
     // has size() and operator[].
@@ -355,9 +323,9 @@ template <class Params_> struct alignas(32) field {
      * @return <true, root> if the element is a quadratic remainder, <false, 0> if it's not
      */
     constexpr std::pair<bool, field> sqrt() const noexcept
-        requires((Params_::modulus_0 & 0x3UL) == 0x3UL);
+        requires((Params_::modulus_uint256.data[0] & 0x3UL) == 0x3UL);
     constexpr std::pair<bool, field> sqrt() const noexcept
-        requires((Params_::modulus_0 & 0x3UL) != 0x3UL);
+        requires((Params_::modulus_uint256.data[0] & 0x3UL) != 0x3UL);
     BB_INLINE constexpr void self_neg() & noexcept;
 
     BB_INLINE constexpr void self_to_montgomery_form() & noexcept;
@@ -365,6 +333,18 @@ template <class Params_> struct alignas(32) field {
     // Reduced versions guarantee output is in canonical form [0, p)
     BB_INLINE constexpr void self_to_montgomery_form_reduced() & noexcept;
     BB_INLINE constexpr void self_from_montgomery_form_reduced() & noexcept;
+
+    // Batched in-place conversions. Route N independent conversions through
+    // montgomery_mul_batched<N>, which on WASM-FMA-SIMD pairs two slots into
+    // a single f64x2 kernel (N=2 is the primary intended use).
+    template <size_t N>
+    BB_INLINE static constexpr void self_to_montgomery_form_batched(std::array<field*, N> xs) noexcept;
+    template <size_t N>
+    BB_INLINE static constexpr void self_from_montgomery_form_batched(std::array<field*, N> xs) noexcept;
+    template <size_t N>
+    BB_INLINE static constexpr void self_to_montgomery_form_reduced_batched(std::array<field*, N> xs) noexcept;
+    template <size_t N>
+    BB_INLINE static constexpr void self_from_montgomery_form_reduced_batched(std::array<field*, N> xs) noexcept;
 
     BB_INLINE constexpr void self_conditional_negate(uint64_t predicate) & noexcept;
 
@@ -471,7 +451,7 @@ template <class Params_> struct alignas(32) field {
      */
     static void split_into_endomorphism_scalars(const field& k, field& k1, field& k2)
     {
-        if constexpr (Params::modulus_3 < MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
+        if constexpr (Params::modulus_uint256.data[3] < MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
             // BN254 base or scalar field: use path that corresponds to 128-bit outputs.
             auto ret = split_into_endomorphism_scalars(k);
             k1 = { ret.first[0], ret.first[1], 0, 0 };
@@ -500,7 +480,7 @@ template <class Params_> struct alignas(32) field {
      */
     static std::pair<std::array<uint64_t, 2>, std::array<uint64_t, 2>> split_into_endomorphism_scalars(const field& k)
     {
-        static_assert(Params::modulus_3 < MODULUS_TOP_LIMB_LARGE_THRESHOLD);
+        static_assert(Params::modulus_uint256.data[3] < MODULUS_TOP_LIMB_LARGE_THRESHOLD);
         field t1 = compute_endomorphism_k2(k);
 
         // k2 (= t1) can be slightly negative for ~2^{-64} of inputs.
@@ -542,65 +522,10 @@ template <class Params_> struct alignas(32) field {
     static constexpr uint256_t not_modulus = -modulus;
     static constexpr uint256_t twice_not_modulus = -twice_modulus;
 
-#if defined(__wasm__) || !defined(__SIZEOF_INT128__)
-    BB_INLINE static constexpr void wasm_madd(uint64_t& left_limb,
-                                              const std::array<uint64_t, WASM_NUM_LIMBS>& right_limbs,
-                                              uint64_t& result_0,
-                                              uint64_t& result_1,
-                                              uint64_t& result_2,
-                                              uint64_t& result_3,
-                                              uint64_t& result_4,
-                                              uint64_t& result_5,
-                                              uint64_t& result_6,
-                                              uint64_t& result_7,
-                                              uint64_t& result_8);
-    BB_INLINE static constexpr void wasm_reduce(uint64_t& result_0,
-                                                uint64_t& result_1,
-                                                uint64_t& result_2,
-                                                uint64_t& result_3,
-                                                uint64_t& result_4,
-                                                uint64_t& result_5,
-                                                uint64_t& result_6,
-                                                uint64_t& result_7,
-                                                uint64_t& result_8);
-    BB_INLINE static constexpr void wasm_reduce_yuval(uint64_t& result_0,
-                                                      uint64_t& result_1,
-                                                      uint64_t& result_2,
-                                                      uint64_t& result_3,
-                                                      uint64_t& result_4,
-                                                      uint64_t& result_5,
-                                                      uint64_t& result_6,
-                                                      uint64_t& result_7,
-                                                      uint64_t& result_8,
-                                                      uint64_t& result_9);
-    BB_INLINE static constexpr std::array<uint64_t, WASM_NUM_LIMBS> wasm_convert(const uint64_t* data);
-#endif
-    BB_INLINE static constexpr std::pair<uint64_t, uint64_t> mul_wide(uint64_t a, uint64_t b) noexcept;
-
-    BB_INLINE static constexpr uint64_t mac(
-        uint64_t a, uint64_t b, uint64_t c, uint64_t carry_in, uint64_t& carry_out) noexcept;
-
-    BB_INLINE static constexpr void mac(
-        uint64_t a, uint64_t b, uint64_t c, uint64_t carry_in, uint64_t& out, uint64_t& carry_out) noexcept;
-
-    BB_INLINE static constexpr uint64_t mac_mini(uint64_t a, uint64_t b, uint64_t c, uint64_t& out) noexcept;
-
-    BB_INLINE static constexpr void mac_mini(
-        uint64_t a, uint64_t b, uint64_t c, uint64_t& out, uint64_t& carry_out) noexcept;
-
-    BB_INLINE static constexpr uint64_t mac_discard_lo(uint64_t a, uint64_t b, uint64_t c) noexcept;
-
+    // ── Universal helpers (defined in field_impl_generic.hpp) ──
     BB_INLINE static constexpr uint64_t addc(uint64_t a, uint64_t b, uint64_t carry_in, uint64_t& carry_out) noexcept;
-
     BB_INLINE static constexpr uint64_t sbb(uint64_t a, uint64_t b, uint64_t borrow_in, uint64_t& borrow_out) noexcept;
 
-    BB_INLINE static constexpr uint64_t square_accumulate(uint64_t a,
-                                                          uint64_t b,
-                                                          uint64_t c,
-                                                          uint64_t carry_in_lo,
-                                                          uint64_t carry_in_hi,
-                                                          uint64_t& carry_lo,
-                                                          uint64_t& carry_hi) noexcept;
     BB_INLINE constexpr field reduce() const noexcept;
     BB_INLINE constexpr field add(const field& other) const noexcept;
     BB_INLINE constexpr field subtract(const field& other) const noexcept;
@@ -624,13 +549,33 @@ template <class Params_> struct alignas(32) field {
     BB_INLINE constexpr field montgomery_mul_big(const field& other) const noexcept;
     BB_INLINE constexpr field montgomery_square() const noexcept;
 
+    // Batched Montgomery mul: *outs[i] = *as[i] * *bs[i] for i in [0, N).
+    //
+    // Dispatches to the active backend's mul_batched<N>. On the WASM FMA-SIMD
+    // backend, N=2 is a genuine SIMD-paired kernel and N=3 co-schedules a
+    // paired FMA kernel alongside a scalar-integer Montgomery mul to exploit
+    // otherwise-idle integer execution ports. On all other backends, this
+    // lowers to N sequential single mul() calls.
+    //
+    // Large-modulus fallback: the small-modulus backends assume Montgomery
+    // form fits in the coarse [0, 2p) range; for large moduli we route each
+    // slot through mul_big, preserving the existing paired-kernel semantics.
+    template <size_t N>
+    BB_INLINE static constexpr void montgomery_mul_batched(std::array<const field*, N> as,
+                                                           std::array<const field*, N> bs,
+                                                           std::array<field*, N> outs) noexcept;
+
+    // Batched Montgomery sqr: *outs[i] = *as[i]^2 for i in [0, N). See
+    // montgomery_mul_batched for dispatch semantics.
+    template <size_t N>
+    BB_INLINE static constexpr void montgomery_sqr_batched(std::array<const field*, N> as,
+                                                           std::array<field*, N> outs) noexcept;
+
 #if (BBERG_NO_ASM == 0)
-    BB_INLINE static field asm_mul_with_coarse_reduction(const field& a, const field& b) noexcept;
-    BB_INLINE static field asm_sqr_with_coarse_reduction(const field& a) noexcept;
+    // asm montmul/square now live in backends/x86_asm.hpp (X86AsmBackend).
+    // Add/sub/reduce/negate remain here since they serve operator+/-/reduce_once.
     BB_INLINE static field asm_add_with_coarse_reduction(const field& a, const field& b) noexcept;
     BB_INLINE static field asm_sub_with_coarse_reduction(const field& a, const field& b) noexcept;
-    BB_INLINE static void asm_self_mul_with_coarse_reduction(field& a, const field& b) noexcept;
-    BB_INLINE static void asm_self_sqr_with_coarse_reduction(field& a) noexcept;
     BB_INLINE static void asm_self_add_with_coarse_reduction(field& a, const field& b) noexcept;
     BB_INLINE static void asm_self_sub_with_coarse_reduction(field& a, const field& b) noexcept;
 

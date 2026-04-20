@@ -19,8 +19,13 @@ template <class base, class T> constexpr field2<base, T> field2<base, T>::operat
 {
     // no funny primes please! we assume -1 is not a quadratic residue
     static_assert((base::modulus.data[0] & 0x3UL) == 0x3UL);
-    base t1 = c0 * other.c0;
-    base t2 = c1 * other.c1;
+    // Karatsuba base products: t1 = c0*other.c0, t2 = c1*other.c1 are fully
+    // independent. Pair them into a single W=2 batched kernel so the WASM-FMA
+    // backend dispatches mul_paired_fma_simd instead of two W=1 int29 kernels.
+    base t1;
+    base t2;
+    base::template montgomery_mul_batched<2>(
+        { &c0, &c1 }, { &other.c0, &other.c1 }, { &t1, &t2 });
     base t3 = c0 + c1;
     base t4 = other.c0 + other.c1;
 
@@ -73,8 +78,16 @@ template <class base, class T> constexpr field2<base, T> field2<base, T>::operat
 
 template <class base, class T> constexpr field2<base, T> field2<base, T>::sqr() const noexcept
 {
-    base t1 = (c0 * c1);
-    return { (c0 + c1) * (c0 - c1), t1 + t1 };
+    // Complex-squaring identity: (c0 + c1*u)^2 = (c0+c1)(c0-c1) + 2*c0*c1*u.
+    // The two Fp muls -- (c0+c1)*(c0-c1) and c0*c1 -- are independent, so
+    // pair them into a single W=2 batched kernel for the same reason as
+    // operator*: the WASM-FMA backend promotes to mul_paired_fma_simd.
+    base sum = c0 + c1;
+    base diff = c0 - c1;
+    base real_part;
+    base t1;
+    base::template montgomery_mul_batched<2>({ &sum, &c0 }, { &diff, &c1 }, { &real_part, &t1 });
+    return { real_part, t1 + t1 };
 }
 
 template <class base, class T> constexpr void field2<base, T>::self_sqr() noexcept
@@ -152,8 +165,17 @@ template <class base, class T> constexpr field2<base, T> field2<base, T>::pow(co
 
 template <class base, class T> constexpr field2<base, T> field2<base, T>::invert() const noexcept
 {
-    base t3 = (c0.sqr() + c1.sqr()).invert();
-    return { c0 * t3, -(c1 * t3) };
+    // Norm |c|^2 = c0^2 + c1^2: two independent Fp squares, then invert the
+    // sum. Pair the squares into one W=2 batched kernel. The two follow-on
+    // muls (c0 * t3 and c1 * t3) are also independent; pair them too.
+    base c0_sqr;
+    base c1_sqr;
+    base::template montgomery_sqr_batched<2>({ &c0, &c1 }, { &c0_sqr, &c1_sqr });
+    base t3 = (c0_sqr + c1_sqr).invert();
+    base out_c0;
+    base out_c1;
+    base::template montgomery_mul_batched<2>({ &c0, &c1 }, { &t3, &t3 }, { &out_c0, &out_c1 });
+    return { out_c0, -out_c1 };
 }
 
 template <class base, class T>

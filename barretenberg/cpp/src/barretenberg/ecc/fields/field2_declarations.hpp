@@ -7,6 +7,7 @@
 #pragma once
 
 #include "barretenberg/numeric/uint256/uint256.hpp"
+#include <array>
 
 // forward declare RNG
 namespace bb::numeric {
@@ -92,6 +93,33 @@ template <class base_field, class Params> struct alignas(32) field2 {
     constexpr bool operator!=(const field2& other) const noexcept { return !(*this == other); }
     constexpr field2 sqr() const noexcept;
     constexpr void self_sqr() noexcept;
+
+    // Batched multiplication: *outs[i] = *as[i] * *bs[i] for i in [0, N).
+    // field2 has no SIMD path, so this is always N sequential multiplications.
+    // Exists so that element_impl.hpp can call Fq::montgomery_mul_batched
+    // uniformly across Fq and Fq2 base fields.
+    template <size_t N>
+    BB_INLINE static constexpr void montgomery_mul_batched(std::array<const field2*, N> as,
+                                                           std::array<const field2*, N> bs,
+                                                           std::array<field2*, N> outs) noexcept
+    {
+        for (size_t i = 0; i < N; ++i) {
+            *outs[i] = *as[i] * *bs[i];
+        }
+    }
+
+    // Batched squaring: *outs[i] = *as[i]^2 for i in [0, N).
+    // field2 has no SIMD sqr path, so this is always N sequential squares.
+    // Exists so element_impl.hpp can call Fq::montgomery_sqr_batched
+    // uniformly (analogous to montgomery_mul_batched above).
+    template <size_t N>
+    BB_INLINE static constexpr void montgomery_sqr_batched(std::array<const field2*, N> as,
+                                                           std::array<field2*, N> outs) noexcept
+    {
+        for (size_t i = 0; i < N; ++i) {
+            *outs[i] = as[i]->sqr();
+        }
+    }
 
     constexpr field2 pow(const uint256_t& exponent) const noexcept;
     constexpr field2 pow(uint64_t exponent) const noexcept;

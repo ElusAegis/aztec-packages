@@ -7,12 +7,23 @@
  * - Precomputed constants related to the twist of BN254
  */
 #include "fq2.hpp"
+#include "fq_extension_test_helpers.hpp"
 #include <gtest/gtest.h>
 
 using namespace bb;
 
+// When MONTMUL_VARIANT_FMA is defined at compile time, the FMA backend's
+// R = 2^264 must be the live Montgomery radix. Asserting this here prevents
+// the #if BB_R_LIMB_BITS == 24 gated FMA code from silently falling through
+// to the int29 (R = 2^261) branch under a misconfigured build.
+// See bench-wasm/BUILD_NOTES.md ("silent-fallthrough trap").
+#ifdef MONTMUL_VARIANT_FMA
+static_assert(bb::R_EXPONENT == 264, "MONTMUL_VARIANT_FMA requires R=2^264 (FMA backend)");
+#endif
+
 TEST(fq2, MulCheckAgainstConstants)
 {
+    SKIP_IF_FMA_24BIT();
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
     fq2 a = { { 0xd673ba38b8c4bc86, 0x860cd1cb9e2f0c85, 0x3185f9f9166177b7, 0xd043f963ced2529 },
               { 0xd4d2fad9a3de5d98, 0x260f72ca434ef415, 0xca5c20c435accb2d, 0x122a54f828a07ffe } };
@@ -35,6 +46,7 @@ TEST(fq2, MulCheckAgainstConstants)
 
 TEST(fq2, SqrCheckAgainstConstants)
 {
+    SKIP_IF_FMA_24BIT();
 #if defined(__SIZEOF_INT128__) && !defined(__wasm__)
     fq2 a = { { 0x26402fd760069ee8, 0x17828cf3bf7dd3e3, 0x4e7449f7b1149987, 0x102f6467805d7298 },
               { 0xa2a31bf895eaf6f8, 0xf0c88d415c372b16, 0xa65ccca8b7806691, 0x1b51e4526673451f } };

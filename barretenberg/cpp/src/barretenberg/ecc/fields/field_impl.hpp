@@ -28,75 +28,33 @@ namespace bb {
 // clang-format on
 /**
  *
- * Mutiplication
+ * Multiplication — delegates to montgomery_mul which contains all dispatch logic.
  *
  **/
 template <class T> constexpr field<T> field<T>::operator*(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
-        // >= 255-bits or <= 64-bits.
-        return montgomery_mul(other);
-    } else {
-        if (std::is_constant_evaluated()) {
-            return montgomery_mul(other);
-        }
-        field result = asm_mul_with_coarse_reduction(*this, other);
-        result.assert_coarse_form();
-        return result;
-    }
+    return montgomery_mul(other);
 }
 
 template <class T> constexpr field<T>& field<T>::operator*=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
-        // >= 255-bits or <= 64-bits.
-        *this = operator*(other);
-    } else {
-        if (std::is_constant_evaluated()) {
-            *this = operator*(other);
-        } else {
-            asm_self_mul_with_coarse_reduction(*this, other);
-            assert_coarse_form();
-        }
-    }
+    *this = montgomery_mul(other);
     return *this;
 }
 
 /**
  *
- * Squaring
+ * Squaring — delegates to montgomery_square which contains all dispatch logic.
  *
  **/
 template <class T> constexpr field<T> field<T>::sqr() const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
-        return montgomery_square();
-    } else {
-        if (std::is_constant_evaluated()) {
-            return montgomery_square();
-        }
-        field result = asm_sqr_with_coarse_reduction(*this);
-        result.assert_coarse_form();
-        return result;
-    }
+    return montgomery_square();
 }
 
 template <class T> constexpr void field<T>::self_sqr() & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
-        *this = montgomery_square();
-    } else {
-        if (std::is_constant_evaluated()) {
-            *this = montgomery_square();
-        } else {
-            asm_self_sqr_with_coarse_reduction(*this);
-            assert_coarse_form();
-        }
-    }
+    *this = montgomery_square();
 }
 
 /**
@@ -106,8 +64,7 @@ template <class T> constexpr void field<T>::self_sqr() & noexcept
  **/
 template <class T> constexpr field<T> field<T>::operator+(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         return add(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -121,8 +78,7 @@ template <class T> constexpr field<T> field<T>::operator+(const field& other) co
 
 template <class T> constexpr field<T>& field<T>::operator+=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         (*this) = operator+(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -155,8 +111,7 @@ template <class T> constexpr field<T> field<T>::operator++(int) noexcept
  **/
 template <class T> constexpr field<T> field<T>::operator-(const field& other) const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         return subtract(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -180,8 +135,7 @@ template <class T> constexpr field<T> field<T>::operator-() const noexcept
 
 template <class T> constexpr field<T>& field<T>::operator-=(const field& other) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         *this = subtract(other);
     } else {
         if (std::is_constant_evaluated()) {
@@ -203,8 +157,7 @@ template <class T> constexpr void field<T>::self_neg() & noexcept
 
 template <class T> constexpr void field<T>::self_conditional_negate(const uint64_t predicate) & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         *this = predicate ? -(*this) : *this; // NOLINT
     } else {
         if (std::is_constant_evaluated()) {
@@ -331,10 +284,68 @@ template <class T> constexpr void field<T>::self_from_montgomery_form_reduced() 
     self_reduce_once();
 }
 
+// Batched in-place conversions. Each wraps montgomery_mul_batched<N> with the
+// appropriate constant (one_raw for `from_`, r_squared for `to_`), followed by
+// an optional self_reduce_once pass for the `_reduced` variants. On the WASM
+// FMA-SIMD backend, N=2 maps to the paired f64x2 kernel, cutting the per-slot
+// cost of the MSM scalar pre-/post-pass. Aliasing `outs[i] == xs[i]` is safe:
+// the kernel reads all inputs to locals before writing outputs.
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_to_montgomery_form_batched(std::array<field*, N> xs) noexcept
+{
+    constexpr field r_squared =
+        field{ r_squared_uint.data[0], r_squared_uint.data[1], r_squared_uint.data[2], r_squared_uint.data[3] };
+    std::array<const field*, N> as{};
+    std::array<const field*, N> bs{};
+    std::array<field*, N> outs{};
+    for (size_t i = 0; i < N; ++i) {
+        as[i] = xs[i];
+        bs[i] = &r_squared;
+        outs[i] = xs[i];
+    }
+    montgomery_mul_batched<N>(as, bs, outs);
+}
+
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_from_montgomery_form_batched(std::array<field*, N> xs) noexcept
+{
+    constexpr field one_raw{ 1, 0, 0, 0 };
+    std::array<const field*, N> as{};
+    std::array<const field*, N> bs{};
+    std::array<field*, N> outs{};
+    for (size_t i = 0; i < N; ++i) {
+        as[i] = xs[i];
+        bs[i] = &one_raw;
+        outs[i] = xs[i];
+    }
+    montgomery_mul_batched<N>(as, bs, outs);
+}
+
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_to_montgomery_form_reduced_batched(std::array<field*, N> xs) noexcept
+{
+    self_to_montgomery_form_batched<N>(xs);
+    for (size_t i = 0; i < N; ++i) {
+        xs[i]->self_reduce_once();
+    }
+}
+
+template <class T>
+template <size_t N>
+constexpr void field<T>::self_from_montgomery_form_reduced_batched(std::array<field*, N> xs) noexcept
+{
+    self_from_montgomery_form_batched<N>(xs);
+    for (size_t i = 0; i < N; ++i) {
+        xs[i]->self_reduce_once();
+    }
+}
+
 template <class T> constexpr field<T> field<T>::reduce_once() const noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         return reduce();
     } else {
         if (std::is_constant_evaluated()) {
@@ -346,8 +357,7 @@ template <class T> constexpr field<T> field<T>::reduce_once() const noexcept
 
 template <class T> constexpr void field<T>::self_reduce_once() & noexcept
 {
-    if constexpr (BBERG_NO_ASM || (T::modulus_3 >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) ||
-                  (T::modulus_1 == 0 && T::modulus_2 == 0 && T::modulus_3 == 0)) {
+    if constexpr (use_generic_arithmetic) {
         *this = reduce();
     } else {
         if (std::is_constant_evaluated()) {
@@ -703,7 +713,7 @@ template <class T> constexpr field<T> field<T>::tonelli_shanks_sqrt() const noex
 
 template <class T>
 constexpr std::pair<bool, field<T>> field<T>::sqrt() const noexcept
-    requires((T::modulus_0 & 0x3UL) == 0x3UL)
+    requires((T::modulus_uint256.data[0] & 0x3UL) == 0x3UL)
 {
     constexpr uint256_t sqrt_exponent = (modulus + uint256_t(1)) >> 2;
     field root = pow(sqrt_exponent);
@@ -715,7 +725,7 @@ constexpr std::pair<bool, field<T>> field<T>::sqrt() const noexcept
 
 template <class T>
 constexpr std::pair<bool, field<T>> field<T>::sqrt() const noexcept
-    requires((T::modulus_0 & 0x3UL) != 0x3UL)
+    requires((T::modulus_uint256.data[0] & 0x3UL) != 0x3UL)
 {
     field root = tonelli_shanks_sqrt();
     if ((root * root) == (*this)) {
@@ -753,16 +763,13 @@ template <class T> constexpr uint64_t field<T>::is_msb_set_word() const noexcept
 template <class T> constexpr bool field<T>::is_zero() const noexcept
 {
     return ((data[0] | data[1] | data[2] | data[3]) == 0) ||
-           (data[0] == T::modulus_0 && data[1] == T::modulus_1 && data[2] == T::modulus_2 && data[3] == T::modulus_3);
+           (data[0] == T::modulus_uint256.data[0] && data[1] == T::modulus_uint256.data[1] && data[2] == T::modulus_uint256.data[2] && data[3] == T::modulus_uint256.data[3]);
 }
 
 template <class T> constexpr field<T> field<T>::get_root_of_unity(size_t subgroup_size) noexcept
 {
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-    field r{ T::primitive_root_0, T::primitive_root_1, T::primitive_root_2, T::primitive_root_3 };
-#else
-    field r{ T::primitive_root_wasm_0, T::primitive_root_wasm_1, T::primitive_root_wasm_2, T::primitive_root_wasm_3 };
-#endif
+    field r{ T::primitive_root_mont.data[0], T::primitive_root_mont.data[1],
+             T::primitive_root_mont.data[2], T::primitive_root_mont.data[3] };
     for (size_t i = primitive_root_log_size(); i > subgroup_size; --i) {
         r.self_sqr();
     }
