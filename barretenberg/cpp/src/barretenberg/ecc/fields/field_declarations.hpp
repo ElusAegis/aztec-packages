@@ -87,8 +87,12 @@ template <class Params_> struct alignas(32) field {
     field() = default;
 
     constexpr field(const numeric::uint256_t& input) noexcept
-        : data{ input.data[0], input.data[1], input.data[2], input.data[3] }
     {
+        uint256_t value = input % modulus;
+        data[0] = value.data[0];
+        data[1] = value.data[1];
+        data[2] = value.data[2];
+        data[3] = value.data[3];
         self_to_montgomery_form();
     }
 
