@@ -24,6 +24,17 @@ TEST(fq2, MulCheckAgainstConstants)
     EXPECT_EQ(result, expected);
 }
 
+TEST(fq2, PairedMul)
+{
+    const fq2 a = fq2::random_element();
+    const fq2 b = fq2::random_element();
+    const fq2 c = fq2::random_element();
+    const fq2 d = fq2::random_element();
+    const auto [o1, o2] = fq2::paired_mul(a, b, c, d);
+    EXPECT_EQ(o1, a * b);
+    EXPECT_EQ(o2, c * d);
+}
+
 TEST(fq2, SqrCheckAgainstConstants)
 {
     fq2 a = { { 0x26402fd760069ee8, 0x17828cf3bf7dd3e3, 0x4e7449f7b1149987, 0x102f6467805d7298 },
@@ -33,6 +44,15 @@ TEST(fq2, SqrCheckAgainstConstants)
 
     fq2 result = a.sqr();
     EXPECT_EQ(result, expected);
+}
+
+TEST(fq2, PairedSqr)
+{
+    const fq2 a = fq2::random_element();
+    const fq2 b = fq2::random_element();
+    const auto [o1, o2] = fq2::paired_sqr(a, b);
+    EXPECT_EQ(o1, a.sqr());
+    EXPECT_EQ(o2, b.sqr());
 }
 
 TEST(fq2, AddCheckAgainstConstants)

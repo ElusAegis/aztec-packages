@@ -302,6 +302,10 @@ static_assert(8 * WASM_LIMB_BITS + WASM_FINAL_REDUCE_BITS == 256,
     }
 
     BB_INLINE constexpr field operator*(const field& other) const noexcept;
+    BB_INLINE static constexpr std::array<field, 2> paired_mul(const field& a,
+                                                               const field& b,
+                                                               const field& c,
+                                                               const field& d) noexcept;
     BB_INLINE constexpr field operator+(const field& other) const noexcept;
     BB_INLINE constexpr field operator-(const field& other) const noexcept;
     BB_INLINE constexpr field operator-() const noexcept;
@@ -327,12 +331,21 @@ static_assert(8 * WASM_LIMB_BITS + WASM_FINAL_REDUCE_BITS == 256,
     BB_INLINE constexpr bool operator!=(const field& other) const noexcept;
 
     BB_INLINE constexpr field to_montgomery_form() const noexcept;
+    BB_INLINE static constexpr std::array<field, 2> paired_to_montgomery_form(const field& a,
+                                                                              const field& b) noexcept;
     BB_INLINE constexpr field from_montgomery_form() const noexcept;
+    BB_INLINE static constexpr std::array<field, 2> paired_from_montgomery_form(const field& a,
+                                                                                const field& b) noexcept;
     // Reduced versions guarantee output is in canonical form [0, p)
     BB_INLINE constexpr field to_montgomery_form_reduced() const noexcept;
+    BB_INLINE static constexpr std::array<field, 2> paired_to_montgomery_form_reduced(const field& a,
+                                                                                       const field& b) noexcept;
     BB_INLINE constexpr field from_montgomery_form_reduced() const noexcept;
+    BB_INLINE static constexpr std::array<field, 2> paired_from_montgomery_form_reduced(const field& a,
+                                                                                         const field& b) noexcept;
 
     BB_INLINE constexpr field sqr() const noexcept;
+    BB_INLINE static constexpr std::array<field, 2> paired_sqr(const field& a, const field& b) noexcept;
     BB_INLINE constexpr void self_sqr() & noexcept;
 
     BB_INLINE constexpr field pow(const uint256_t& exponent) const noexcept;

@@ -73,15 +73,79 @@ where each $k_i$ is the masked low limb at reduction step $i$. By construction:
 Since $r_{inv} = 2^{-29} \mod p < p$, the total added via Yuval reductions is bounded by $(2^{203} - 1) \cdot p$. The two standard reductions together add at most $(2^{256} - 2^{203}) \cdot p$.
 
 Therefore, the numerator is bounded by:
-$$4p^2 + (2^{232} - 1) \cdot p + (2^{261} - 2^{232}) \cdot p < 4p^2 + 2^{261} \cdot p$$
+$$4p^2 + (2^{203} - 1) \cdot p + (2^{256} - 2^{203}) \cdot p < 4p^2 + 2^{256} \cdot p$$
 
-Dividing by $2^{261}$:
-$$\frac{4p^2 + 2^{261} \cdot p}{2^{261}} = p + \frac{4p^2}{2^{261}}$$
+Dividing by $2^{256}$ (the cumulative reduction width $7 \cdot 29 + 29 + 24$):
+$$\frac{4p^2 + 2^{256} \cdot p}{2^{256}} = p + \frac{4p^2}{2^{256}}$$
 
-For 254-bit primes, $p < 2^{254}$, so $4p^2 < 4 \cdot 2^{508} = 2^{510}$, and:
-$$\frac{4p^2}{2^{261}} < 1 $$
+For 254-bit primes, $p < 2^{254}$, so $4p < 2^{256}$ and hence:
+$$\frac{4p^2}{2^{256}} = \frac{(4p) \cdot p}{2^{256}} < p$$
 
-Thus the result is less than $p + 1$, which is of course in the coarse representation range $[0, 2p)$. No additional reduction is required.
+Thus the result is less than $2p$, which is in the coarse representation range $[0, 2p)$. No additional reduction is required.
+
+### Paired Montgomery multiplication {#field_docs_paired_explainer}
+
+On WASM targets that enable relaxed-SIMD (`__wasm_relaxed_simd__`), we additionally expose a *paired* kernel that computes two independent Montgomery products $a \cdot b$ and $c \cdot d$ in a single pass by riding the two `f64x2` SIMD lanes:
+```cpp
+auto [o1, o2] = field::paired_mul(a, b, c, d);                         // o1 = a*b, o2 = c*d (Montgomery)
+auto [o1, o2] = field::paired_sqr(a, b);                               // o1 = a^2, o2 = b^2 (Montgomery)
+auto [m1, m2] = field::paired_to_montgomery_form(a, b);                // m1, m2 in Montgomery form
+auto [r1, r2] = field::paired_from_montgomery_form_reduced(a, b);      // r1, r2 in canonical [0, p)
+```
+On non-relaxed-SIMD builds, or when the modulus is 256-bit (secp curves), these dispatch to two ordinary single-lane multiplications. The paired kernel is restricted to small (<254-bit) moduli because its internal limb shape does not have headroom for the looser 256-bit-modulus arithmetic.
+
+Internally the paired kernel uses a different limb decomposition from the standard WASM kernel: **5 × 51-bit limbs** (a 255-bit form, denoted `u51` in code) rather than 9 × 29-bit. This is forced by `f64x2` FMA: the relaxed-FMA result has a 53-bit mantissa, so 51-bit operands give a 102-bit product with one bit of headroom, which is the sweet spot. The high/low halves of each 51 × 51 product are extracted using two carefully chosen IEEE-754 bias constants (`C1 = 2^103`, `C2 = C1 + 2^52 + 2^51`) — a round-to-nearest-even FMA trick that splits the mantissa with no integer multiplication. The Montgomery target is still $R = 2^{256}$: the 5 × 51-bit reduced result is converted back to canonical 4 × 64-bit limbs via `u255_to_u256_shr_1` (the reduced value is in $[0, 2p) \subset [0, 2^{255})$ so the shift is exact).
+
+#### Threshold and setup
+
+The kernel's 5 × 51-bit layout holds values up to $2^{255}$. Coarse-form inputs are bounded by $2p$, so the kernel applies precisely when $2p < 2^{255}$, i.e. $p < 2^{254}$. Larger moduli (the secp curves) fall back to single-lane `montgomery_mul` and `montgomery_sqr`.
+
+Before reduction, `paired_mul` (resp. `paired_sqr`) packs each input into 5 × 51-bit lane-paired form (lane 0 carries the first product, lane 1 the second), converts each limb to f64 via `i2f_v128`, runs a 5 × 5 schoolbook (`paired_mul`) or its triangular off-diagonal-doubled equivalent (`paired_sqr`), and writes the 10-limb column accumulator. Both shapes produce the same per-column $p_{\text{lo}}$ / $p_{\text{hi}}$ histogram, encoded once in `LO_BIAS_COUNTS` and `HI_BIAS_COUNTS`; `make_initial` seeds each column with the negation of that bias so the IEEE-754 anchor cancels exactly when the column finishes summing. After the schoolbook, the per-column integer sum $t_{\text{in}} = \sum_{k=0}^{9} t_k \cdot \beta^k$ satisfies, in each lane,
+$$t_{\text{in}} < (2p)^2 = 4 p^2, \quad \beta = 2^{51},$$
+and the kernel target is $t_{\text{in}} \cdot \beta^{-5} \bmod p$, i.e. the kernel's internal Montgomery factor is $R_{\text{kernel}} = \beta^5 = 2^{255}$.
+
+#### Reduction pipeline
+
+`reduce_and_finalize_paired_rne` reduces $t_{\text{in}}$ to outer Montgomery form in five phases:
+
+**Phase 1 — signed carry propagation through $t_0, t_1, t_2, t_3$.** Phase 2 will mask each of $t_0$, $t_1$, $t_2$ to 51 bits when feeding the rho folds, so any high bits live in those slots must be pushed up first or they would be silently dropped. After phase 1, $t_0$, $t_1$, $t_2$ are at most 51 bits live, and the carry-out of $t_2$ has joined $t_3$ in the high window.
+
+**Phase 2 — three parallel rho folds.** For each $k \in \{0, 1, 2\}$,
+$$t_k \cdot \beta^k \equiv (t_k \cdot \beta^{k-3}) \cdot \beta^3 \pmod{p}.$$
+Applied to the schoolbook expansion, this gives
+$$t_{\text{in}} = \sum_{k=0}^{9} t_k \cdot \beta^k \equiv \beta^3 \cdot \sum_{k=0}^{9} t_k \cdot \beta^{k-3} \pmod{p},$$
+so the bottom three limbs (153 bits) can be dropped: the residue is now represented in a 7-limb high window at positions $\beta^3, \beta^4, \ldots, \beta^9$. The constants $\rho_{2-k} = \beta^{k-3} \bmod p$ are precomputed at compile time in 5 × 51-bit form by `compute_div_r_inv_local` (see `paired_rne_constants::rho`). The three folds share no inputs, so they execute on independent SIMD lane-pairs and combine via a balanced add tree. Phase 2 preserves the residue mod $p$ but **does not shrink the integer magnitude**: after it, $\mathrm{ss}$ is on the order of $\beta^2 \cdot p$.
+
+**Phase 3 — two CIOS reductions.** Each step computes the scalar
+$$m \;=\; \mathrm{ss}[i] \cdot n_p \bmod \beta, \qquad n_p \;=\; -p^{-1} \bmod \beta$$
+(the `u51_np0` constant), adds $m \cdot p$ to the live window so the bottom limb is divisible by $\beta$, and propagates the carry forward — equivalently,
+$$\mathrm{ss} \leftarrow (\mathrm{ss} + m \cdot p) / \beta.$$
+Each step both divides by $\beta$ and tightens the bound: the per-step transform is
+$$\mathrm{ss} < B \;\implies\; \mathrm{ss} < B/\beta + p$$
+because $m \cdot p < \beta \cdot p$ before the divide. Two steps starting from $\sim \beta^2 \cdot p$ chain as $\beta^2 p \to \beta p + p \to 2p + p/\beta$. After phase 3, $\mathrm{ss} < 2p + p/\beta$ in kernel form $R_{\text{kernel}} = 2^{255}$ — the residual $p/\beta$ slack is absorbed by phase 5's halving.
+
+**Phase 4 — parity fix.** To convert $R_{\text{kernel}} = 2^{255}$ to outer $R = 2^{256}$, one more halving mod $p$ is needed. If $\mathrm{ss}$ is odd, we add $p$ — since $p$ is odd, $\mathrm{ss} + p$ is even and still $\equiv \mathrm{ss} \pmod p$ — then run one carry-propagation pass to renormalize the 5 × 51-bit limbs. After phase 4, $\mathrm{ss} < 3p + p/\beta$.
+
+**Phase 5 — lane split + fused $\gg 1$ repack.** `pack_to_4x64_shr_1` extracts each lane's scalar 5 × 51-bit array and repacks to 4 × 64-bit with a fused $\gg 1$, performing the halving prepared in phase 4. This is the final $\beta^{-1}$-equivalent step: combined with phases 2 and 3 the cumulative reduction is $3 \cdot 51 + 2 \cdot 51 + 1 = 256$ bits, which exactly converts $R_{\text{kernel}} = 2^{255}$ to outer $R = 2^{256}$. The output remains in coarse Montgomery form, matching the rest of the field API.
+
+#### Bounds analysis
+
+We must verify that the output is in $[0, 2p)$ without requiring an additional subtraction of $p$.
+
+After the schoolbook, both factors are coarse ($< 2p$), so each column-sum-as-integer satisfies
+$$\mathrm{ss} \;<\; (2p)^2 = 4p^2.$$
+
+Phase 1 is a pure signed carry shuffle and does not change the integer value of $\mathrm{ss}$. Phase 2 replaces $t_{\text{in}}$ with a residue-equivalent value in a 7-limb $\beta^3 \ldots \beta^9$ window; bookkeeping (each $t_k < \beta$ contributes $t_k \cdot \rho_{2-k} < \beta \cdot p$ to the high window) puts the post-phase-2 bound at the order of $\beta^2 \cdot p$, which we take as the starting bound $B_3 = \beta^2 p$ for the CIOS chain.
+
+Phase 3 applies the bound transform $B \mapsto B/\beta + p$ twice:
+$$\beta^2 p \;\longrightarrow\; \beta p + p \;\longrightarrow\; \frac{\beta p + p}{\beta} + p \;=\; 2p + \frac{p}{\beta},$$
+so after phase 3, $\mathrm{ss} < 2p + p/\beta$ in kernel form. Note this is *strictly larger* than $2p$ — the residual $p/\beta$ slack is by design, and phase 5 absorbs it.
+
+Phase 4 conditionally adds $p$, giving $\mathrm{ss} < 3p + p/\beta$. Phase 5's fused halving then yields
+$$\frac{\mathrm{ss} + 0 \text{ or } p}{2} \;<\; \frac{3p + p/\beta}{2} \;=\; \frac{3p}{2} + \frac{p}{2\beta} \;<\; 2p$$
+(the final inequality follows from $p/(2\beta) < p/2$ for $\beta > 1$, and $\beta = 2^{51}$ comfortably satisfies this with $p/(2\beta) \approx p \cdot 2^{-52}$). The final 4 × 64-bit output is in coarse Montgomery form $[0, 2p)$, as required. No conditional subtraction is needed.
+
+The two CIOS $m$-factors in phase 3 are computed with scalar 64-bit multiplications because `wasm_i64x2_mul` lowers to ~6 micro-ops on x86 V8, which is more expensive than two GPR `imul`s + extract/make.
 
 ### Converting to and from Montgomery form
 Obviously we want to avoid using standard form division when converting between forms, so we use Montgomery form to convert to Montgomery form. If we look at a value $a\ mod\ p$ we can notice that this is the Montgomery form of $a\cdot R^{-1}\ mod\ p$, so if we want to get $aR$ from it, we need to multiply it by the Montgomery form of $R\ mod\ p$, which is $R\cdot R\ mod\ p$. So using Montgomery multiplication we compute
@@ -112,6 +176,8 @@ We use 9 29-bit limbs for computation while keeping the canonical 4 × 64-bit st
 1. 128-bit result 64*64 bit multiplication
 2. 64-bit addition with carry
 
+On WASM targets that also expose relaxed SIMD, an additional *paired* implementation (see [Paired Montgomery multiplication](#field_docs_paired_explainer)) computes two independent Montgomery products at once using a 5 × 51-bit `f64x2` SIMD pipeline. It is an opt-in API surface (`paired_mul`, `paired_sqr`, …); the standard `montgomery_mul` still uses the 9 × 29-bit pipeline.
+
 In the past we implemented a version with 32-bit limbs, but as a result, when we accumulated limb products we always had to split 64-bit results of 32-bit multiplication back into 32-bit chunks. Had we not, the addition of 2 64-bit products would have lost the carry flag and the result would be incorrect. There were 2 issues with this:
 1. This spawned in a lot of masking operations
 2. We didn't use more efficient algorithms for squaring, because multiplication by 2 of intermediate products would once again overflow.
@@ -133,7 +199,7 @@ Conversion from field elements exists only to unsigned integers and bools. The v
 
 ## Field parameters
 
-The field template is instantiated with field parameter classes, for example, class bb::Bn254FqParams. Each such class contains at least the modulus (in 64-bit and 29-bit form), r_inv (used to efficient reductions) and 2 versions of r_squared used for converting to Montgomery form (64-bit and WASM/29-bit version). r_squared and other parameters (such as cube_root, primitive_root and coset_generator) are defined for wasm separately, because the values represent an element already in Montgomery form.
+The field template is instantiated with field parameter classes, for example, class bb::Bn254FqParams. Each such class contains at least the modulus (in 64-bit and 29-bit form), r_inv (used for efficient reductions; the WASM Yuval-style reduction uses an additional `r_inv_wasm = 2^{-29} mod p` precomputation in 9 × 29-bit form), and r_squared used for converting to Montgomery form. Since $R = 2^{256}$ is shared across native and WASM, r_squared is a single value (no separate WASM version), and likewise cube_root, primitive_root and coset_generator — values already in Montgomery form — are defined once and used by every backend.
 
 ## Helpful python snippets
 
