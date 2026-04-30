@@ -85,24 +85,30 @@ template <class base, class T> constexpr void field2<base, T>::self_sqr() noexce
 // is in canonical form [0, p) rather than the coarse internal representation [0, 2p).
 template <class base, class T> constexpr field2<base, T> field2<base, T>::to_montgomery_form() const noexcept
 {
-    return { c0.to_montgomery_form_reduced(), c1.to_montgomery_form_reduced() };
+    field2 result = *this;
+    result.self_to_montgomery_form();
+    return result;
 }
 
 template <class base, class T> constexpr field2<base, T> field2<base, T>::from_montgomery_form() const noexcept
 {
-    return { c0.from_montgomery_form_reduced(), c1.from_montgomery_form_reduced() };
+    field2 result = *this;
+    result.self_from_montgomery_form();
+    return result;
 }
 
 template <class base, class T> constexpr void field2<base, T>::self_to_montgomery_form() noexcept
 {
-    c0.self_to_montgomery_form_reduced();
-    c1.self_to_montgomery_form_reduced();
+    const auto [n0, n1] = base::paired_to_montgomery_form_reduced(c0, c1);
+    c0 = n0;
+    c1 = n1;
 }
 
 template <class base, class T> constexpr void field2<base, T>::self_from_montgomery_form() noexcept
 {
-    c0.self_from_montgomery_form_reduced();
-    c1.self_from_montgomery_form_reduced();
+    const auto [n0, n1] = base::paired_from_montgomery_form_reduced(c0, c1);
+    c0 = n0;
+    c1 = n1;
 }
 
 template <class base, class T> constexpr field2<base, T> field2<base, T>::reduce_once() const noexcept

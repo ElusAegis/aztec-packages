@@ -279,6 +279,15 @@ static_assert(8 * WASM_LIMB_BITS + WASM_FINAL_REDUCE_BITS == 256,
     static constexpr field zero() { return field(0, 0, 0, 0); }
     static constexpr field neg_one() { return -field(1); }
     static constexpr field one() { return field(1); }
+    // R^2 mod p as a raw field literal (NOT Montgomery form). Used as the rhs of a Montgomery
+    // multiplication to enter Montgomery form: mul(a, R^2) ≡ a*R (mod p).
+    static constexpr field r_squared()
+    {
+        return field(r_squared_uint.data[0], r_squared_uint.data[1], r_squared_uint.data[2], r_squared_uint.data[3]);
+    }
+    // Raw integer 1 (NOT Montgomery form). Used as the rhs of a Montgomery multiplication
+    // to strip the R factor, i.e. to leave Montgomery form: mul(a*R, 1) ≡ a (mod p).
+    static constexpr field one_raw() { return field(1, 0, 0, 0); }
 
     static constexpr field coset_generator()
     {

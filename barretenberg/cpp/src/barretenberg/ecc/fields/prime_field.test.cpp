@@ -263,6 +263,41 @@ TYPED_TEST(PrimeFieldTest, MontgomeryRoundtrip)
     EXPECT_EQ(a, b);
 }
 
+TYPED_TEST(PrimeFieldTest, PairedToMontgomeryForm)
+{
+    using F = TypeParam;
+
+    // Use random Montgomery-encoded field elements directly as random field elements.
+    // They may be coarse [0, 2p), but to_montgomery_form accepts valid internal residues.
+    F a = F::random_element();
+    F b = F::random_element();
+
+    F expected_a = a;
+    F expected_b = b;
+    expected_a.self_to_montgomery_form();
+    expected_b.self_to_montgomery_form();
+
+    const auto [out_a, out_b] = F::paired_to_montgomery_form(a, b);
+    EXPECT_EQ(out_a, expected_a);
+    EXPECT_EQ(out_b, expected_b);
+}
+
+TYPED_TEST(PrimeFieldTest, PairedFromMontgomeryForm)
+{
+    using F = TypeParam;
+    const F a = F::random_element();
+    const F b = F::random_element();
+
+    F expected_a = a;
+    F expected_b = b;
+    expected_a.self_from_montgomery_form();
+    expected_b.self_from_montgomery_form();
+
+    const auto [out_a, out_b] = F::paired_from_montgomery_form(a, b);
+    EXPECT_EQ(out_a, expected_a);
+    EXPECT_EQ(out_b, expected_b);
+}
+
 // ================================
 // Square Root
 // ================================
