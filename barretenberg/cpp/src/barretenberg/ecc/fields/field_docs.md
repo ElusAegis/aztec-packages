@@ -4,9 +4,7 @@ Barretenberg has its own implementation of finite field arithmetic. The implemen
 
 ## Field arithmetic
 ### Introduction to Montgomery form {#field_docs_montgomery_explainer}
-We use Montgomery multiplication to speed up field multiplication. For an original element  $ a \in \mathbb F_p$ the element is represented internally as $$ a⋅R\ mod\ p$$ where $R = 2^d\ mod\ p$. The chosen $d$ depends on the build configuration:
-1. $d=29⋅9=261$ for builds that don't support the `uint128_t` type, for example, for WASM build
-2. $d=64⋅4=256$ for standard builds (x86_64).
+We use Montgomery multiplication to speed up field multiplication. For an original element  $ a \in \mathbb F_p$ the element is represented internally as $$ a⋅R\ mod\ p$$ where $R = 2^d\ mod\ p$ and $d=64⋅4=256$ on every backend (x86_64, generic 64-bit, and WASM). On WASM we still expand to 9 × 29-bit limbs internally during a multiplication, but the canonical 4 × 64-bit Montgomery form on input/output is the same as on x86_64. Consequently, Montgomery-form constants (`r_squared`, `cube_root`, `coset_generator`) are single shared values across all builds.
 
 The goal of using Montgomery form is to avoid heavy division modulo $p$. To compute a representative of element $$c = a⋅b\ mod\ p$$ we compute $$c⋅R = (a⋅R)⋅(b⋅R) / R\ mod\ p,$$ but we use an efficient division trick to avoid the naive modular division. Let's look into the standard 4⋅64 case:
 1. First, we compute the value $$c_r=c⋅R⋅R = aR⋅bR$$ in integers and get a value with 8 64-bit limbs
@@ -52,27 +50,27 @@ The term `(result_0 >> 29)` handles any overflow bits in `result_0` beyond the l
 
 #### Structure of WASM Montgomery multiplication
 
-In 254-bit WASM multiplication, the full Montgomery reduction requires 9 limb-reductions (to divide by $2^{261} = 2^{29 \cdot 9}$). **We apply Yuval's method for the first 8 reductions, and standard Montgomery reduction for the 9th (final) reduction.**
+In 254-bit WASM multiplication the cumulative shift across all reductions must equal $R = 2^{256}$ (not $2^{261}$), since the canonical output form is the same 4 × 64-bit Montgomery layout used by x86_64. We achieve this with 9 limb-reductions whose widths sum to 256: $256 = 7 \cdot 29 + 29 + 24$. **We apply Yuval's method for the first 7 reductions, a standard Montgomery 29-bit reduction for the 8th, and a special 24-bit Montgomery reduction (`wasm_reduce_24`) for the 9th (final) step.** The schoolbook multiplication that produces the 17-limb intermediate is a Karatsuba 5+4 split (`wasm_karatsuba_mul`) that costs 66 multiplications instead of the naïve 81.
 
-Why not use Yuval for all 9? The key issue is that Yuval's method takes a 10-limb input and produces a 10-limb output (the reduced value spans 9 limbs, shifted up by one position). If we used Yuval for the 9th reduction, we would end up with a 10-limb result instead of the desired 9-limb result. The standard Montgomery reduction (`wasm_reduce`), by contrast, takes 9 limbs and produces 9 limbs (with the lowest limb zeroed and discardable), giving us exactly the 9-limb output we need.
-
+Why not use Yuval for all 8 of the 29-bit reductions? Yuval's per-step slack on the running bound is $2^{29} \cdot p$ (vs. Montgomery's $p$). Eight Yuvals would push the high limb to $\approx 2^{283}$, and the final $/2^{24}$ step would land at $\approx 64p$ — outside the coarse range $[0, 2p)$. Replacing the eighth Yuval with a Montgomery 29-bit step tightens that bound back to $\approx p$, so after the final 24-bit reduction the result is in $[0, 2p)$ with no conditional subtraction.
 #### Bounds analysis
 
 We must verify that the output is in $[0, 2p)$ (the coarse representation) without requiring an additional subtraction of $p$.
 
-After the 9 multiply-adds, we have $aR \cdot bR$ stored across 17 limbs. Since both $aR$ and $bR$ are in $[0, 2p)$, this product is at most $4p^2$.
+After the Karatsuba multiplication, we have $aR \cdot bR$ stored across 17 limbs. Since both $aR$ and $bR$ are in $[0, 2p)$, this product is at most $4p^2$.
 
-After 8 Yuval reductions and 1 standard reduction, we have computed:
-$$\frac{aR \cdot bR + k_0 \cdot r_{inv} + k_1 \cdot r_{inv} + \cdots + k_7 \cdot r_{inv} + k_8 \cdot p}{2^{261}}$$
+After 7 Yuval reductions, 1 standard 29-bit Montgomery reduction, and 1 standard 24-bit Montgomery reduction, we have computed:
+$$\frac{aR \cdot bR + k_0 \cdot r_{inv} + k_1 \cdot r_{inv} + \cdots + k_6 \cdot r_{inv} + k_7 \cdot p + k_8 \cdot p}{2^{256}}$$
 
-where each $k_i$ is the masked low 29 bits at reduction step $i$. By construction:
+where each $k_i$ is the masked low limb at reduction step $i$. By construction:
 - $k_0 < 2^{29}$
 - $k_1 < 2^{58}$ (since it includes carries from the previous step)
-- For $i < 8$, we have $k_i < 2^{29(i+1)}$
-- The sum $\sum_{i=0}^{7} k_i < 2^{232}$ (geometric series)
-- $k_8 < 2^{261} - 2^{232}$
+- For $i \le 7$ we have $k_i < 2^{29(i+1)}$
+- The Yuval sum $\sum_{i=0}^{6} k_i < 2^{203}$ (geometric series)
+- $k_7 < 2^{232}$ (Montgomery 29-bit)
+- $k_8 < 2^{256} - 2^{232}$ (Montgomery 24-bit, at limb position $7 \cdot 29 = 203$, masked to 24 bits)
 
-Since $r_{inv} = 2^{-29} \mod p < p$, the total added via Yuval reductions is bounded by $(2^{232} - 1) \cdot p$. The final standard reduction adds at most $(2^{261} - 2^{232}) \cdot p$.
+Since $r_{inv} = 2^{-29} \mod p < p$, the total added via Yuval reductions is bounded by $(2^{203} - 1) \cdot p$. The two standard reductions together add at most $(2^{256} - 2^{203}) \cdot p$.
 
 Therefore, the numerator is bounded by:
 $$4p^2 + (2^{232} - 1) \cdot p + (2^{261} - 2^{232}) \cdot p < 4p^2 + 2^{261} \cdot p$$
@@ -110,7 +108,7 @@ The assembly implementation for x86_64 is optimized. There are 2 versions:
 
 Implementation for WASM:
 
-We use 9 29-bit limbs for computation (storage stays the same) and we change the Montgomery form. The reason for a different architecture is that WASM doesn't have:
+We use 9 29-bit limbs for computation while keeping the canonical 4 × 64-bit storage and the same $R = 2^{256}$ Montgomery form as native. The reason for the different internal limb width is that WASM doesn't have:
 1. 128-bit result 64*64 bit multiplication
 2. 64-bit addition with carry
 
@@ -210,11 +208,8 @@ def parse_field_params(s):
     parameter_dictionary['primitive_root']=recover_element_from_parts('primitive_root',64)
 
     parameter_dictionary['modulus_wasm']=recover_element_from_parts('modulus_wasm',29)
-    parameter_dictionary['r_squared_wasm']=recover_element_from_parts('r_squared_wasm',64)
-    parameter_dictionary['cube_root_wasm']=recover_element_from_parts('cube_root_wasm',64)
-    parameter_dictionary['primitive_root_wasm']=recover_element_from_parts('primitive_root_wasm',64)
+    parameter_dictionary['r_inv_wasm']=recover_element_from_parts('r_inv_wasm',29)
     parameter_dictionary={**parameter_dictionary,**recover_multiple_arrays('coset_generators')}
-    parameter_dictionary={**parameter_dictionary,**recover_multiple_arrays('coset_generators_wasm')}
     parameter_dictionary['endo_g1_lo']=recover_single_value_if_present('endo_g1_lo')
     parameter_dictionary['endo_g1_mid']=recover_single_value_if_present('endo_g1_mid')
     parameter_dictionary['endo_g1_hi']=recover_single_value_if_present('endo_g1_hi')
@@ -227,17 +222,9 @@ def parse_field_params(s):
 
     assert(parameter_dictionary['modulus']==parameter_dictionary['modulus_wasm']) # Check modulus representations are equivalent
     modulus=parameter_dictionary['modulus']
-    r_wasm_divided_by_r_regular=2**(261-256)
-    assert(parameter_dictionary['r_squared']==pow(2,512,modulus)) # Check r_squared
-    assert(parameter_dictionary['r_squared_wasm']==pow(2,9*29*2,modulus)) # Check r_squared_wasm
-    assert(parameter_dictionary['cube_root']*r_wasm_divided_by_r_regular%modulus==parameter_dictionary['cube_root_wasm'])
+    assert(parameter_dictionary['r_squared']==pow(2,512,modulus)) # Check r_squared (R = 2^256)
+    assert(parameter_dictionary['r_inv_wasm']*(1<<29)%modulus==1) # Check r_inv_wasm = 2^{-29} mod p
     assert(pow(parameter_dictionary['cube_root']*pow(2,-256,modulus),3,modulus)==1) # Check cubic root
-    assert(pow(parameter_dictionary['cube_root_wasm']*pow(2,-29*9,modulus),3,modulus)==1) # Check cubic root for wasm
-    assert(parameter_dictionary['primitive_root']*r_wasm_divided_by_r_regular%modulus==parameter_dictionary['primitive_root_wasm']) # Check primitive roots are equivalent
-    for i in range(8):
-        regular_coset_generator=reconstruct_field_from_4_parts([parameter_dictionary[f'coset_generators_{j}'][i] for j in range(4)])
-        wasm_coset_generator=reconstruct_field_from_4_parts([parameter_dictionary[f'coset_generators_wasm_{j}'][i] for j in range(4)])
-        assert(regular_coset_generator*r_wasm_divided_by_r_regular%modulus == wasm_coset_generator)
 
     return parameter_dictionary
 ```
