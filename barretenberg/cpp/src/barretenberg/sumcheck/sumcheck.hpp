@@ -676,6 +676,10 @@ template <typename Flavor> class SumcheckProver {
             BB_BENCH_TRACY_NAME("Sumcheck::partially_evaluate");
             const auto& poly = source_view[j];
             const size_t limit = poly.end_index();
+            // Sumcheck multilinear contract: limit is even (a power of 2 in the standard path).
+            // The loop has no odd-tail handler; odd limit would silently drop the trailing element.
+            BB_ASSERT_DEBUG((limit & 1) == 0,
+                            "partially_evaluate: end_index must be even; odd limit drops the trailing element");
             size_t i = 0;
 
             // Pair-stride: paired_mul is faster than two singles; fuses two consecutive folds per iteration.
