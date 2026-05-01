@@ -291,23 +291,12 @@ static_assert(8 * WASM_LIMB_BITS + WASM_FINAL_REDUCE_BITS == 256,
 
     static constexpr field coset_generator()
     {
-#if defined(__SIZEOF_INT128__) && !defined(__wasm__)
-        const field result{
+        return field{
             Params::coset_generator_0,
             Params::coset_generator_1,
             Params::coset_generator_2,
             Params::coset_generator_3,
         };
-#else
-        const field result{
-            Params::coset_generator_0,
-            Params::coset_generator_1,
-            Params::coset_generator_2,
-            Params::coset_generator_3,
-        };
-#endif
-
-        return result;
     }
 
     BB_INLINE constexpr field operator*(const field& other) const noexcept;
