@@ -737,6 +737,9 @@ __attribute__((always_inline)) inline void batch_affine_add_interleaved(AffineEl
         points[(i + num_points) >> 1].y = points[i].x - points[i].y;
     }
 
+    // Backward pass: recover inverses in reverse order (Montgomery's trick: process the later
+    // pair (i+3) before the earlier (i+1) so each iteration unwinds one product from inv_acc).
+    // Loop variable `i_plus_4` stays positive to avoid size_t underflow when the loop exits.
     for (size_t i_plus_4 = num_unrolled_pairs * 2; i_plus_4 > 0; i_plus_4 -= 4) {
         size_t i = i_plus_4 - 4;
 
