@@ -14,7 +14,8 @@
 namespace bb {
 namespace detail {
 
-// Relaxed-SIMD paired RNE helpers for WASM paired multiplication when modulus p < 2^254.
+// Relaxed-SIMD paired RNE helpers for WASM paired multiplication in the
+// modulus range covered by the paired coarse-output proof.
 // Uses the 5x51 limbs representations to efficiently compute the limb multiplication
 // using floating point SIMD multiply and add operation.
 
@@ -22,6 +23,11 @@ inline constexpr uint64_t WASM_PAIRED_LIMB_BITS = 51;
 inline constexpr uint64_t WASM_PAIRED_LIMB_MASK = (1ULL << WASM_PAIRED_LIMB_BITS) - 1;
 // 5 limbs * 51 bits = 255 bits, enough to hold any value < 2^255 (modulus has < 2^254).
 inline constexpr size_t WASM_PAIRED_NUM_LIMBS = 5;
+// The paired end-to-end bound closes exactly when p < 2^254 - 2^204 = (2^62 - 2^12) * 2^192,
+// so the top limb of a largest safe field modulus is 2^62 - 2^12 - 1. This covers the
+// BN254 / Grumpkin field parameters.
+inline constexpr uint64_t WASM_PAIRED_MAX_MODULUS_3 =
+    MODULUS_TOP_LIMB_LARGE_THRESHOLD - (1ULL << 12) - 1;
 
 // Anchors for the Emmart-Zheng two-FMA integer multiply: for a,b < 2^51 we
 // have a*b < 2^102, and the two FMAs split that 102-bit product into
@@ -351,10 +357,11 @@ constexpr std::array<field<T>, 2> field<T>::paired_mul(const field& a,
                                                        const field& d) noexcept
 {
 #if defined(__wasm_relaxed_simd__) && defined(__wasm__)
-    // The paired kernel's 5×51-bit layout holds at most 2^255. Coarse-form
-    // inputs are < 2p, so the kernel applies when 2p < 2^255, i.e. p < 2^254.
-    // Larger moduli (e.g. secp curves) fall back to montgomery_mul_big().
-    if constexpr (T::modulus_3 < MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
+    // The 5×51 layout itself only requires p < 2^254, but the current
+    // implementation-level coarse-output proof closes only for the top-limb
+    // range captured by WASM_PAIRED_MAX_MODULUS_3. Larger moduli fall back to
+    // the ordinary single-lane path.
+    if constexpr (T::modulus_3 <= detail::WASM_PAIRED_MAX_MODULUS_3) {
         if (!std::is_constant_evaluated()) {
             using namespace detail;
 
@@ -401,10 +408,11 @@ constexpr std::array<field<T>, 2> field<T>::paired_mul(const field& a,
 template <class T> constexpr std::array<field<T>, 2> field<T>::paired_sqr(const field& a, const field& b) noexcept
 {
 #if defined(__wasm_relaxed_simd__) && defined(__wasm__)
-    // The paired kernel's 5×51-bit layout holds at most 2^255. Coarse-form
-    // inputs are < 2p, so the kernel applies when 2p < 2^255, i.e. p < 2^254.
-    // Larger moduli (e.g. secp curves) fall back to a.sqr() / b.sqr().
-    if constexpr (T::modulus_3 < MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
+    // The 5×51 layout itself only requires p < 2^254, but the current
+    // implementation-level coarse-output proof closes only for the top-limb
+    // range captured by WASM_PAIRED_MAX_MODULUS_3. Larger moduli fall back to
+    // the ordinary single-lane path.
+    if constexpr (T::modulus_3 <= detail::WASM_PAIRED_MAX_MODULUS_3) {
         if (!std::is_constant_evaluated()) {
             using namespace detail;
 

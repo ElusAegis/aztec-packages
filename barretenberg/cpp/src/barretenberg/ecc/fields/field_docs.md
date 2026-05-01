@@ -4,15 +4,15 @@ Barretenberg has its own implementation of finite field arithmetic. The implemen
 
 ## Field arithmetic
 ### Introduction to Montgomery form {#field_docs_montgomery_explainer}
-We use Montgomery multiplication to speed up field multiplication. For an original element  $ a \in \mathbb F_p$ the element is represented internally as $$ a⋅R\ mod\ p$$ where $R = 2^d\ mod\ p$ and $d=64⋅4=256$ on every backend (x86_64, generic 64-bit, and WASM). On WASM we still expand to 9 × 29-bit limbs internally during a multiplication, but the canonical 4 × 64-bit Montgomery form on input/output is the same as on x86_64. Consequently, Montgomery-form constants (`r_squared`, `cube_root`, `coset_generator`) are single shared values across all builds.
+We use Montgomery multiplication to speed up field multiplication. For an element $a \in \mathbb F_p$, the element is represented internally as $$a \cdot R \mod p$$ where $R = 2^d$ and $d = 256$ on every backend (x86_64: $4 \times 64 = 256$, generic 64-bit: $4 \times 64 = 256$, and WASM: $8 \times 29 + 24 = 256$ for the standard path, $5 \times 51 + 1 = 256$ for the paired path). Note that WASM uses a different internal representation during Montgomery multiplication, but the canonical 4 × 64-bit Montgomery form at input and output is preserved on all backends. Consequently, Montgomery-form constants (`r_squared`, `cube_root`, `coset_generator`) are shared across all builds.
 
 The goal of using Montgomery form is to avoid heavy division modulo $p$. To compute a representative of element $$c = a⋅b\ mod\ p$$ we compute $$c⋅R = (a⋅R)⋅(b⋅R) / R\ mod\ p,$$ but we use an efficient division trick to avoid the naive modular division. Let's look into the standard 4⋅64 case:
 1. First, we compute the value $$c_r=c⋅R⋅R = aR⋅bR$$ in integers and get a value with 8 64-bit limbs
 2. Then we take the lowest limb of $c_r$ (i.e., $c_r[0]$) and multiply it by a special _precomputed_ value $$r_{inv} = -1 ⋅ p^{-1}\ mod\  2^{64}$$ As a result we get $$k = r_{inv}⋅ c_r[0]\ mod\ 2^{64}$$
 3. Next we update $c_r$ in integers by adding $k⋅p$: $$c_r += k⋅p$$ You might notice that the value of $c_r\ mod\ p$ hasn't changed, since we've added a multiple of the modulus. At the same time, if we look at the expression modulo $2^{64}$: $$c_r + k⋅p = c_r + c_r⋅r_{inv}⋅p = c_r + c_r⋅ (-1)⋅p^{-1}⋅p = c_r - c_r = 0\ mod\ 2^{64}.$$ The result is equivalent modulo $p$, but we zeroed out the lowest limb
-4. We perform the same operation for $c_r[1]$, but instead of adding $k⋅p$, we add $2^{64}⋅k⋅p$. In the implementation, instead of adding $k⋅ p$ to limbs of $c_r$ starting with zero, we just start with limb 1. This ensures that $c_r[1]=0$. We then perform the same operation for 2 more limbs.
+4. We perform the same operation for $c_r[1]$, but instead of adding $k⋅p$, we add $2^{64}⋅k⋅p$. In the implementation, instead of adding $k⋅ p$ to limbs of $c_r$ starting with zero, we just start with limb 1. This ensures that $c_r[1]=0$. We then perform the same operation for the remaining low limbs, $c_r[2]$ and $c_r[3]$.
 5. At this stage the array $c_r$ has the property that the first 4 limbs of the total 8 limbs are zero. So if we treat the 4 high limbs as a separate integer $c_{r.high}$, $$c_r = c_{r.high}⋅2^{256}=c_{r.high}⋅R\ mod\ p \Rightarrow c_{r.high} = c\cdot R\ mod\ p$$ and we can get the evaluation simply by taking the 4 high limbs of $c_r$.
-6. The previous step has reduced the intermediate value of $cR$ to range $[0,2p)$, so we must check if it is more than $p$ and subtract the modulus once if it overflows.
+6. For our 256-bit fields, the previous step has reduced the intermediate value enough that conditionally subtracting one copy of $p$ is sufficient to bring it into the valid range $[0, 2^{256})$. For our 254-bit fields, the result is already in the coarse range $[0,2p)$, so no additional reduction is needed.
 
 On a high level, what we are doing is iteratively adding a multiple of $p$ until the current bottom limb is zero, then shifting by a limb (amounting to dividing by $2^{64}$).
 #### Bounds analysis
@@ -27,125 +27,200 @@ $$aR\cdot bR + k_{0,1,2,3}p \le (2p-1)^2+(2^{256}-1)p = 2^{256}p+4p^2-5p+1 \Righ
 
 **N.B.** In the code we refer to this form, when the limbs are only constrained to be in the range $[0,2p)$, as the coarse-representation.
 
-### Yuval reduction
-For our 254-bit multiplication in WASM, we use a reduction technique found by Yuval. For a reference, please see this [hackmd](https://hackmd.io/@Ingonyama/Barret-Montgomery).
+### WASM reduction primitives
+For WASM backends it is useful to separate the primitive reduction steps from the full multiplication pipelines that use them. In this subsection we use $\beta$ for the radix of the current reduction step, $x$ for the accumulator before the step, $x_0 = x \mod \beta$ for its lowest radix-$\beta$ digit, and $x'$ for the value after the step.
 
-Recall that in standard Montgomery reduction, we zero out the lowest limb by adding a carefully chosen multiple of the modulus $p$. In particular, if we were to use standard Montgomery reduction given our limb-decomposition for WASM: given an accumulator $x = \sum_{i=0}^{n} \text{result}_i \cdot 2^{29i}$, we compute $k = \text{result}_0 \cdot (-p^{-1}) \mod 2^{29}$ and add $k \cdot p$ to $x$. This makes the lowest 29 bits zero (since $\text{result}_0 + k \cdot p_0 \equiv 0 \mod 2^{29}$), allowing us to "shift right" by discarding the zeroed limb.
+#### Ordinary Montgomery reduction
+This is the same Montgomery reduction pattern explained in [Introduction to Montgomery form](#field_docs_montgomery_explainer). We compute
+$$m = x_0 \cdot (-p^{-1}) \mod \beta$$
+and form
+$$x' = \frac{x + m \cdot p}{\beta} \mod p.$$
+By construction,
+$$x_0 + m \cdot p \equiv 0 \mod \beta,$$
+so the division by $\beta$ is exact.
 
-Yuval's method takes a different approach. Instead of adding a multiple of $p$ to zero out the low bits, we directly compute the equivalent value after the divide by $2^{29}$ step. Given the same accumulator $x$, we want to find $x / 2^{29} \mod p$. We can rewrite this as:
-$$x / 2^{29} = (x - \text{result}_0) / 2^{29} + \text{result}_0 / 2^{29} \mod p.$$
-
-The first term $(x - \text{result}_0) / 2^{29}$ is simply the higher limbs shifted down. The second term requires computing $\text{result}_0 \cdot 2^{-29} \mod p$, which we precompute as `r_inv_wasm` (stored in 9 limbs).
-
-So instead of computing $k = \text{result}_0 \cdot (-p^{-1})$ and adding $k \cdot p$ (9 multiply-accumulates), we compute $\text{result}_0 \cdot r\_inv\_wasm$ and add it to the higher limbs (also 9 multiply-accumulates). The key insight is that both approaches require the same number of operations, but Yuval's method avoids the need for a separate "zero out and shift" step—the shift is implicit in how we interpret the result.
-
-In code, `wasm_reduce_yuval` implements this as:
-```cpp
-result_1 += result_0_masked * wasm_r_inv[0] + (result_0 >> 29);
-result_2 += result_0_masked * wasm_r_inv[1];
-// ... and so on for result_3 through result_9
-```
-
-The term `(result_0 >> 29)` handles any overflow bits in `result_0` beyond the lowest 29 bits, propagating them to `result_1`. After this operation, `result_0` is effectively discarded, and `result_1` through `result_9` hold the Montgomery-reduced value.
-
-#### Structure of WASM Montgomery multiplication
-
-In 254-bit WASM multiplication the cumulative shift across all reductions must equal $R = 2^{256}$ (not $2^{261}$), since the canonical output form is the same 4 × 64-bit Montgomery layout used by x86_64. We achieve this with 9 limb-reductions whose widths sum to 256: $256 = 7 \cdot 29 + 29 + 24$. **We apply Yuval's method for the first 7 reductions, a standard Montgomery 29-bit reduction for the 8th, and a special 24-bit Montgomery reduction (`wasm_reduce_24`) for the 9th (final) step.** The schoolbook multiplication that produces the 17-limb intermediate is a Karatsuba 5+4 split (`wasm_karatsuba_mul`) that costs 66 multiplications instead of the naïve 81.
-
-Why not use Yuval for all 8 of the 29-bit reductions? Yuval's per-step slack on the running bound is $2^{29} \cdot p$ (vs. Montgomery's $p$). Eight Yuvals would push the high limb to $\approx 2^{283}$, and the final $/2^{24}$ step would land at $\approx 64p$ — outside the coarse range $[0, 2p)$. Replacing the eighth Yuval with a Montgomery 29-bit step tightens that bound back to $\approx p$, so after the final 24-bit reduction the result is in $[0, 2p)$ with no conditional subtraction.
 #### Bounds analysis
+Let $B$ be any upper bound on the current accumulator $x$ before this reduction step. Since $m < \beta$, we have $m \cdot p < \beta \cdot p$, and therefore
+$$x' < \frac{B}{\beta} + p.$$
+This is the local bound used by every ordinary Montgomery reduction step in the WASM backends.
 
+The three concrete instances are:
+1. `wasm_reduce_29`, with $\beta = 2^{29}$.
+2. `wasm_reduce_24`, with $\beta = 2^{24}$. This is the same step, but only 24 bits are removed from the total shift; the remaining 5 bits of the surrounding 29-bit limb stay live and are packed into the final 4 × 64-bit output.
+3. The paired ordinary Montgomery reduction, with $\beta = 2^{51}$. After the rho folds, the paired backend applies this same step twice.
+
+#### Yuval reduction
+For our 254-bit WASM multiplication we also use a reduction technique found by Yuval. For a reference, please see this [hackmd](https://hackmd.io/@Ingonyama/Barret-Montgomery). Here we specialize to $\beta = 2^{29}$.
+
+Instead of adding a multiple of $p$ to zero out $x_0$, Yuval's method rewrites the divide-by-$\beta$ step directly:
+$$\frac{x}{\beta} = \frac{x - x_0}{\beta} + x_0 \cdot \beta^{-1} \mod p.$$
+Thus
+$$x' = \frac{x - x_0}{\beta} + x_0 \cdot \beta^{-1} \mod p.$$
+In the implementation, the factor $\beta^{-1} \mod p$ is precomputed as `r_inv_wasm`.
+
+#### Bounds analysis
+Since $x_0 < \beta$ and $\beta^{-1} \mod p < p$, the correction term satisfies
+$$x_0 \cdot \beta^{-1} \mod p < \beta \cdot p.$$
+Therefore, if $x < B$ before the Yuval step, then
+$$x' < \frac{B}{\beta} + \beta \cdot p.$$
+Compared with the ordinary Montgomery bound $\frac{B}{\beta} + p$, this leaves much looser slack. That looser slack is exactly why Yuval is useful locally, but cannot be used for every step if the final result is to remain in the coarse range $[0, 2p)$.
+
+#### Paired rho-fold reduction
+On the relaxed-SIMD paired path the first part of reduction is conceptually analogous to Yuval's idea: instead of zeroing a low limb with a multiple of $p$, we replace the bottom limbs by precomputed multiples of inverse powers of the radix.
+
+Let
+$$x = \sum_{k=0}^{9} t_k \cdot \beta^k.$$
+For each $k \in \{0, 1, 2\}$ we precompute
+$$\rho_{2-k} = \beta^{k-3} \mod p,$$
+so that
+$$t_k \cdot \beta^k \equiv (t_k \cdot \rho_{2-k}) \cdot \beta^3 \mod p.$$
+Applying this identity to $t_0$, $t_1$, and $t_2$ gives
+$$x = t_0 + t_1 \beta + t_2 \beta^2 + t_3 \beta^3 + \cdots + t_9 \beta^9$$
+$$\equiv (t_0 \rho_2 + t_1 \rho_1 + t_2 \rho_0)\beta^3 + t_3 \beta^3 + t_4 \beta^4 + \cdots + t_9 \beta^9 \mod p$$
+$$= \beta^3 \left( t_0 \rho_2 + t_1 \rho_1 + t_2 \rho_0 + t_3 + t_4 \beta + \cdots + t_9 \beta^6 \right) \mod p.$$
+If we define the resulting 7-limb high window by
+$$y = t_0 \rho_2 + t_1 \rho_1 + t_2 \rho_0 + t_3 + t_4 \beta + \cdots + t_9 \beta^6,$$
+then
+$$x \equiv \beta^3 \cdot y \mod p,$$
+so after the rho folds we can drop the bottom three limbs and continue with the high window $y$, which represents the value $x / \beta^3 \mod p$.
+Because the three folds do not share inputs, they can be computed in parallel and then combined with a balanced add tree.
+
+#### Bounds analysis
+Since the paired kernel is only used on coarse inputs, we have
+$$x < (2p)^2 = 4p^2.$$
+After the preceding carry-propagation phase, the folded limbs satisfy $0 \le t_0, t_1, t_2 < \beta$, while the rho constants satisfy $0 \le \rho_{2-k} < p$. Hence the three rho corrections contribute less than $3 \beta \cdot p$ in total, and the carried high window contributes less than $x / \beta^3$. Therefore
+$$y < \frac{x}{\beta^3} + 3 \beta \cdot p < \frac{4p^2}{\beta^3} + 3 \beta \cdot p.$$
+Assuming
+$$p < \frac{\beta^5}{2} - \beta^4.$$
+we get
+$$\frac{4p^2}{\beta^3} < \frac{4p}{\beta^3}\left(\frac{\beta^5}{2} - \beta^4\right) = 2 \beta^2 \cdot p - 4 \beta \cdot p.$$
+Substituting this into the generic rho-fold bound gives
+$$y < \left(2 \beta^2 \cdot p - 4 \beta \cdot p\right) + 3 \beta \cdot p = 2 \beta^2 \cdot p - \beta \cdot p.$$
+So the rho folds preserve the residue modulo $p$, but they do **not** yet produce the final coarse bound. This is why the paired backend then applies two ordinary Montgomery reductions with $\beta = 2^{51}$, each producing the bounds $x' < B / \beta + p$.
+
+#### Paired parity fix and halving
+Let $x$ denote the intermediate value after those two ordinary Montgomery reduction steps.
+
+The paired kernel's internal Montgomery factor is
+$$R_{\text{kernel}} = \beta^5 = 2^{255},$$
+so after the rho folds and two ordinary Montgomery reduction steps we have reduced by 255 bits rather than 256. The last bit is handled by a parity fix followed by a fused halving-and-repack step.
+
+If $x$ is even, we can just shift by 1. If $x$ is odd, we add $p$, and since $p$ is odd, $x + p$ is then even and still congruent to $x$ modulo $p$. Hence we can also shift by 1 to get the final form. This fused final shift is done by `pack_to_4x64_shr_1`.
+
+#### Bounds analysis
+If the input to this stage satisfies
+$$x < B,$$
+then after the optional add-$p$ step we have
+$$x + 0 \text{ or } p < B + p.$$
+After the final halving,
+$$x' = \frac{x + 0 \text{ or } p}{2} < \frac{B + p}{2}.$$
+In particular, if $x < 3p$, then $x' < 2p$. Likewise, if $x < 2p + p / \beta$, then
+$$x' < \frac{3p + p / \beta}{2} < 2p.$$
+This is what closes the paired pipeline back to the same coarse Montgomery range $[0, 2p)$ used by the rest of the small-modulus field code.
+
+### WASM Montgomery multiplication pipelines
+All WASM multiplication backends must achieve a net division by
+$$R = 2^{256},$$
+but they do so with different combinations of the primitives above:
+1. For 254-bit fields in the standard 9 × 29-bit backend: 7 Yuval steps, 1 ordinary Montgomery reduction with $\beta = 2^{29}$, and 1 final ordinary Montgomery reduction with $\beta = 2^{24}$.
+2. For 256-bit fields in the standard 9 × 29-bit backend: 8 ordinary Montgomery reductions with $\beta = 2^{29}$ and 1 final ordinary Montgomery reduction with $\beta = 2^{24}$.
+3. For the relaxed-SIMD paired backend: 3 rho folds, 2 ordinary Montgomery reduction steps, and 1 parity/halving step.
+
+#### Regular WASM multiplication (small moduli)
+For our 254-bit WASM multiplication the cumulative shift across all reductions must equal $R = 2^{256}$. We achieve this with 9 reduction steps whose widths sum to 256:
+$$256 = 7 \cdot 29 + 29 + 24.$$
+The multiplication that produces the 17-limb intermediate is a Karatsuba 5+4 split (`wasm_karatsuba_mul`) that costs 66 multiplications instead of the naive 81. The reduction chain then applies 7 `wasm_reduce_yuval` steps, 1 `wasm_reduce_29` step, and 1 `wasm_reduce_24` step.
+
+Why not use Yuval for all 8 of the 29-bit steps? Because Yuval's local slack is $2^{29} \cdot p$, whereas ordinary Montgomery's local slack is only $p$. Seven Yuval steps are still acceptable, but replacing the eighth 29-bit step with an ordinary Montgomery reduction is what tightens the running bound enough that the final 24-bit step lands back in $[0, 2p)$.
+
+#### Bounds analysis
 We must verify that the output is in $[0, 2p)$ (the coarse representation) without requiring an additional subtraction of $p$.
 
-After the Karatsuba multiplication, we have $aR \cdot bR$ stored across 17 limbs. Since both $aR$ and $bR$ are in $[0, 2p)$, this product is at most $4p^2$.
+After the Karatsuba multiplication, we have $aR \cdot bR$ stored across 17 relaxed 29-bit limbs. Since both multiplicands are in coarse Montgomery form, we have
+$$aR < 2p,\qquad bR < 2p,\qquad aR \cdot bR < 4p^2.$$
 
-After 7 Yuval reductions, 1 standard 29-bit Montgomery reduction, and 1 standard 24-bit Montgomery reduction, we have computed:
-$$\frac{aR \cdot bR + k_0 \cdot r_{inv} + k_1 \cdot r_{inv} + \cdots + k_6 \cdot r_{inv} + k_7 \cdot p + k_8 \cdot p}{2^{256}}$$
+As explained above, each Yuval correction `u * r_inv_wasm` can be bounded by $u \cdot p$.
 
-where each $k_i$ is the masked low limb at reduction step $i$. By construction:
-- $k_0 < 2^{29}$
-- $k_1 < 2^{58}$ (since it includes carries from the previous step)
-- For $i \le 7$ we have $k_i < 2^{29(i+1)}$
-- The Yuval sum $\sum_{i=0}^{6} k_i < 2^{203}$ (geometric series)
-- $k_7 < 2^{232}$ (Montgomery 29-bit)
-- $k_8 < 2^{256} - 2^{232}$ (Montgomery 24-bit, at limb position $7 \cdot 29 = 203$, masked to 24 bits)
+Let $K$ be the total correction coefficient after expressing every correction term at the common pre-division-by-$2^{256}$ scale. We decompose it as
+$$K = K_{\mathrm{Yuval}} + K_{29} + K_{24},$$
+where
+$$K_{\mathrm{Yuval}} = \sum_{i=0}^{6} u_i 2^{29i}, \qquad K_{29} = v 2^{203}, \qquad K_{24} = w 2^{232},$$
+with
+$$0 \le u_i < 2^{29}, \qquad 0 \le v < 2^{29}, \qquad 0 \le w < 2^{24}.$$
 
-Since $r_{inv} = 2^{-29} \mod p < p$, the total added via Yuval reductions is bounded by $(2^{203} - 1) \cdot p$. The two standard reductions together add at most $(2^{256} - 2^{203}) \cdot p$.
+The seven Yuval steps occupy the seven disjoint 29-bit windows covering bit positions $0$ through $202$, so
+$$K_{\mathrm{Yuval}} < \sum_{i=0}^{6} (2^{29} - 1)2^{29i} = 2^{203} - 1 < 2^{203}.$$
+The eighth step is an ordinary Montgomery correction in the next 29-bit window, covering bit positions $203$ through $231$, so
+$$K_{29} < (2^{29} - 1)2^{203} = 2^{232} - 2^{203}.$$
+The final 24-bit correction occupies the remaining bit positions $232$ through $255$, so
+$$K_{24} < (2^{24} - 1)2^{232} = 2^{256} - 2^{232}.$$
+Therefore
+$$K < 2^{203} + (2^{232} - 2^{203}) + (2^{256} - 2^{232}) = 2^{256}.$$
 
-Therefore, the numerator is bounded by:
-$$4p^2 + (2^{203} - 1) \cdot p + (2^{256} - 2^{203}) \cdot p < 4p^2 + 2^{256} \cdot p$$
+So after all 9 steps the result is bounded by
+$$\frac{aR \cdot bR + K \cdot p}{2^{256}} < \frac{4p^2 + 2^{256} \cdot p}{2^{256}} = p + \frac{4p^2}{2^{256}}.$$
+For 254-bit primes, $p < 2^{254}$, so $4p < 2^{256}$ and hence
+$$\frac{4p^2}{2^{256}} = \frac{(4p) \cdot p}{2^{256}} < p.$$
+Thus the final result is less than $2p$, which is exactly the desired coarse range. No additional reduction is required.
 
-Dividing by $2^{256}$ (the cumulative reduction width $7 \cdot 29 + 29 + 24$):
-$$\frac{4p^2 + 2^{256} \cdot p}{2^{256}} = p + \frac{4p^2}{2^{256}}$$
+#### Big-modulus WASM multiplication
+For 256-bit fields we do not have a dedicated paired kernel and the standard WASM backend therefore uses only ordinary Montgomery reductions: 8 steps of `wasm_reduce_29` followed by 1 step of `wasm_reduce_24`.
 
-For 254-bit primes, $p < 2^{254}$, so $4p < 2^{256}$ and hence:
-$$\frac{4p^2}{2^{256}} = \frac{(4p) \cdot p}{2^{256}} < p$$
-
-Thus the result is less than $2p$, which is in the coarse representation range $[0, 2p)$. No additional reduction is required.
-
-### Paired Montgomery multiplication {#field_docs_paired_explainer}
-
-On WASM targets that enable relaxed-SIMD (`__wasm_relaxed_simd__`), we additionally expose a *paired* kernel that computes two independent Montgomery products $a \cdot b$ and $c \cdot d$ in a single pass by riding the two `f64x2` SIMD lanes:
-```cpp
-auto [o1, o2] = field::paired_mul(a, b, c, d);                         // o1 = a*b, o2 = c*d (Montgomery)
-auto [o1, o2] = field::paired_sqr(a, b);                               // o1 = a^2, o2 = b^2 (Montgomery)
-auto [m1, m2] = field::paired_to_montgomery_form(a, b);                // m1, m2 in Montgomery form
-auto [r1, r2] = field::paired_from_montgomery_form_reduced(a, b);      // r1, r2 in canonical [0, p)
-```
-On non-relaxed-SIMD builds, or when the modulus is 256-bit (secp curves), these dispatch to two ordinary single-lane multiplications. The paired kernel is restricted to small (<254-bit) moduli because its internal limb shape does not have headroom for the looser 256-bit-modulus arithmetic.
-
-Internally the paired kernel uses a different limb decomposition from the standard WASM kernel: **5 × 51-bit limbs** (a 255-bit form, denoted `u51` in code) rather than 9 × 29-bit. This is forced by `f64x2` FMA: the relaxed-FMA result has a 53-bit mantissa, so 51-bit operands give a 102-bit product with one bit of headroom, which is the sweet spot. The high/low halves of each 51 × 51 product are extracted using two carefully chosen IEEE-754 bias constants (`C1 = 2^103`, `C2 = C1 + 2^52 + 2^51`) — a round-to-nearest-even FMA trick that splits the mantissa with no integer multiplication. The Montgomery target is still $R = 2^{256}$: the 5 × 51-bit reduced result is converted back to canonical 4 × 64-bit limbs via `u255_to_u256_shr_1` (the reduced value is in $[0, 2p) \subset [0, 2^{255})$ so the shift is exact).
-
-#### Threshold and setup
-
-The kernel's 5 × 51-bit layout holds values up to $2^{255}$. Coarse-form inputs are bounded by $2p$, so the kernel applies precisely when $2p < 2^{255}$, i.e. $p < 2^{254}$. Larger moduli (the secp curves) fall back to single-lane `montgomery_mul` and `montgomery_sqr`.
-
-Before reduction, `paired_mul` (resp. `paired_sqr`) packs each input into 5 × 51-bit lane-paired form (lane 0 carries the first product, lane 1 the second), converts each limb to f64 via `i2f_v128`, runs a 5 × 5 schoolbook (`paired_mul`) or its triangular off-diagonal-doubled equivalent (`paired_sqr`), and writes the 10-limb column accumulator. Both shapes produce the same per-column $p_{\text{lo}}$ / $p_{\text{hi}}$ histogram, encoded once in `LO_BIAS_COUNTS` and `HI_BIAS_COUNTS`; `make_initial` seeds each column with the negation of that bias so the IEEE-754 anchor cancels exactly when the column finishes summing. After the schoolbook, the per-column integer sum $t_{\text{in}} = \sum_{k=0}^{9} t_k \cdot \beta^k$ satisfies, in each lane,
-$$t_{\text{in}} < (2p)^2 = 4 p^2, \quad \beta = 2^{51},$$
-and the kernel target is $t_{\text{in}} \cdot \beta^{-5} \bmod p$, i.e. the kernel's internal Montgomery factor is $R_{\text{kernel}} = \beta^5 = 2^{255}$.
-
-#### Reduction pipeline
-
-`reduce_and_finalize_paired_rne` reduces $t_{\text{in}}$ to outer Montgomery form in five phases:
-
-**Phase 1 — signed carry propagation through $t_0, t_1, t_2, t_3$.** Phase 2 will mask each of $t_0$, $t_1$, $t_2$ to 51 bits when feeding the rho folds, so any high bits live in those slots must be pushed up first or they would be silently dropped. After phase 1, $t_0$, $t_1$, $t_2$ are at most 51 bits live, and the carry-out of $t_2$ has joined $t_3$ in the high window.
-
-**Phase 2 — three parallel rho folds.** For each $k \in \{0, 1, 2\}$,
-$$t_k \cdot \beta^k \equiv (t_k \cdot \beta^{k-3}) \cdot \beta^3 \pmod{p}.$$
-Applied to the schoolbook expansion, this gives
-$$t_{\text{in}} = \sum_{k=0}^{9} t_k \cdot \beta^k \equiv \beta^3 \cdot \sum_{k=0}^{9} t_k \cdot \beta^{k-3} \pmod{p},$$
-so the bottom three limbs (153 bits) can be dropped: the residue is now represented in a 7-limb high window at positions $\beta^3, \beta^4, \ldots, \beta^9$. The constants $\rho_{2-k} = \beta^{k-3} \bmod p$ are precomputed at compile time in 5 × 51-bit form by `compute_div_r_inv_local` (see `paired_rne_constants::rho`). The three folds share no inputs, so they execute on independent SIMD lane-pairs and combine via a balanced add tree. Phase 2 preserves the residue mod $p$ but **does not shrink the integer magnitude**: after it, $\mathrm{ss}$ is on the order of $\beta^2 \cdot p$.
-
-**Phase 3 — two CIOS reductions.** Each step computes the scalar
-$$m \;=\; \mathrm{ss}[i] \cdot n_p \bmod \beta, \qquad n_p \;=\; -p^{-1} \bmod \beta$$
-(the `u51_np0` constant), adds $m \cdot p$ to the live window so the bottom limb is divisible by $\beta$, and propagates the carry forward — equivalently,
-$$\mathrm{ss} \leftarrow (\mathrm{ss} + m \cdot p) / \beta.$$
-Each step both divides by $\beta$ and tightens the bound: the per-step transform is
-$$\mathrm{ss} < B \;\implies\; \mathrm{ss} < B/\beta + p$$
-because $m \cdot p < \beta \cdot p$ before the divide. Two steps starting from $\sim \beta^2 \cdot p$ chain as $\beta^2 p \to \beta p + p \to 2p + p/\beta$. After phase 3, $\mathrm{ss} < 2p + p/\beta$ in kernel form $R_{\text{kernel}} = 2^{255}$ — the residual $p/\beta$ slack is absorbed by phase 5's halving.
-
-**Phase 4 — parity fix.** To convert $R_{\text{kernel}} = 2^{255}$ to outer $R = 2^{256}$, one more halving mod $p$ is needed. If $\mathrm{ss}$ is odd, we add $p$ — since $p$ is odd, $\mathrm{ss} + p$ is even and still $\equiv \mathrm{ss} \pmod p$ — then run one carry-propagation pass to renormalize the 5 × 51-bit limbs. After phase 4, $\mathrm{ss} < 3p + p/\beta$.
-
-**Phase 5 — lane split + fused $\gg 1$ repack.** `pack_to_4x64_shr_1` extracts each lane's scalar 5 × 51-bit array and repacks to 4 × 64-bit with a fused $\gg 1$, performing the halving prepared in phase 4. This is the final $\beta^{-1}$-equivalent step: combined with phases 2 and 3 the cumulative reduction is $3 \cdot 51 + 2 \cdot 51 + 1 = 256$ bits, which exactly converts $R_{\text{kernel}} = 2^{255}$ to outer $R = 2^{256}$. The output remains in coarse Montgomery form, matching the rest of the field API.
+This is the same large-modulus Montgomery logic as the native 4 × 64-bit code, but expressed in 9 × 29-bit limbs. The key difference from the 254-bit case is that the inputs are only known to be arbitrary 256-bit values, so the final target range is $[0, 2^{256})$, not $[0, 2p)$.
 
 #### Bounds analysis
+Let the two inputs be arbitrary 256-bit values in Montgomery form. Then
+$$aR < 2^{256}, \qquad bR < 2^{256}, \qquad aR \cdot bR < 2^{512}.$$
 
-We must verify that the output is in $[0, 2p)$ without requiring an additional subtraction of $p$.
+As above, let $K$ be the total correction coefficient after expressing every correction term at the common pre-division-by-$2^{256}$ scale. We decompose it as
+$$K = K_{29} + K_{24},$$
+where
+$$K_{29} = \sum_{i=0}^{7} u_i 2^{29i}, \qquad K_{24} = w 2^{232},$$
+with
+$$0 \le u_i < 2^{29}, \qquad 0 \le w < 2^{24}.$$
 
-After the schoolbook, both factors are coarse ($< 2p$), so each column-sum-as-integer satisfies
-$$\mathrm{ss} \;<\; (2p)^2 = 4p^2.$$
+The eight ordinary 29-bit reductions occupy bit positions $0$ through $231$, so
+$$K_{29} < \sum_{i=0}^{7} (2^{29} - 1)2^{29i} = 2^{232} - 1 < 2^{232}.$$
+The final 24-bit correction occupies bit positions $232$ through $255$, so
+$$K_{24} < (2^{24} - 1)2^{232} = 2^{256} - 2^{232}.$$
+Therefore
+$$K < 2^{232} + (2^{256} - 2^{232}) = 2^{256}.$$
+Therefore the reduced result is bounded by
+$$\frac{aR \cdot bR + K \cdot p}{2^{256}} < \frac{2^{512} + 2^{256} \cdot p}{2^{256}} = 2^{256} + p.$$
+So a single conditional subtraction of $p$ is sufficient to bring the result back into the valid 256-bit range $[0, 2^{256})$.
 
-Phase 1 is a pure signed carry shuffle and does not change the integer value of $\mathrm{ss}$. Phase 2 replaces $t_{\text{in}}$ with a residue-equivalent value in a 7-limb $\beta^3 \ldots \beta^9$ window; bookkeeping (each $t_k < \beta$ contributes $t_k \cdot \rho_{2-k} < \beta \cdot p$ to the high window) puts the post-phase-2 bound at the order of $\beta^2 \cdot p$, which we take as the starting bound $B_3 = \beta^2 p$ for the CIOS chain.
+#### Paired WASM multiplication
+On WASM targets that enable relaxed-SIMD (`__wasm_relaxed_simd__`), we additionally expose a paired kernel that computes two independent Montgomery products in a single pass by using the two SIMD lanes. On non-relaxed-SIMD builds, or when the modulus is 256-bit (secp curves), this dispatches to two ordinary single-lane multiplications.
 
-Phase 3 applies the bound transform $B \mapsto B/\beta + p$ twice:
-$$\beta^2 p \;\longrightarrow\; \beta p + p \;\longrightarrow\; \frac{\beta p + p}{\beta} + p \;=\; 2p + \frac{p}{\beta},$$
-so after phase 3, $\mathrm{ss} < 2p + p/\beta$ in kernel form. Note this is *strictly larger* than $2p$ — the residual $p/\beta$ slack is by design, and phase 5 absorbs it.
+The paired API surface is `paired_mul`, `paired_sqr`, `paired_to_montgomery_form`, and `paired_from_montgomery_form(_reduced)`.
 
-Phase 4 conditionally adds $p$, giving $\mathrm{ss} < 3p + p/\beta$. Phase 5's fused halving then yields
-$$\frac{\mathrm{ss} + 0 \text{ or } p}{2} \;<\; \frac{3p + p/\beta}{2} \;=\; \frac{3p}{2} + \frac{p}{2\beta} \;<\; 2p$$
-(the final inequality follows from $p/(2\beta) < p/2$ for $\beta > 1$, and $\beta = 2^{51}$ comfortably satisfies this with $p/(2\beta) \approx p \cdot 2^{-52}$). The final 4 × 64-bit output is in coarse Montgomery form $[0, 2p)$, as required. No conditional subtraction is needed.
+The paired kernel is restricted to small moduli. At representation level, the 5 × 51-bit layout can only hold values below $2^{255}$, so we must have
+$$2p < 2^{255}, \qquad \text{i.e. } p < 2^{254}.$$
+In the current implementation we impose the slightly stronger bound
+$$p < 2^{254} - 2^{204},$$
+because this is the largest threshold for which the paired coarse-output proof closes uniformly.
 
-The two CIOS $m$-factors in phase 3 are computed with scalar 64-bit multiplications because `wasm_i64x2_mul` lowers to ~6 micro-ops on x86 V8, which is more expensive than two GPR `imul`s + extract/make.
+It uses 5 × 51-bit limbs rather than 9 × 29-bit limbs, which reduces the number of cross-limb multiplications compared with the standard WASM path. This is possible because the relaxed-FMA path uses `ez_mul`, which computes a 51 × 51 limb product. It does so by using two relaxed FMAs together with carefully chosen IEEE-754 bias constants (`C1 = 2^{103}`, `C2 = C1 + 2^{52} + 2^{51}`) to recover the high and low 51-bit halves of each 51 × 51 product without an integer multiplication. After packing the inputs into the 5 × 51-bit layout and converting them to `f64x2`, the kernel runs a 5 × 5 schoolbook multiplication. Because of the extra FMA overhead, the paired kernel is in roughly the same performance range as the regular WASM path; however, since it works in SIMD, it computes two products at once. We could not simply convert the standard WASM kernel to SIMD, because that would require a natural lane-wise 64 × 64 → 64 multiplication path, which WASM SIMD does not provide in the form we need. This is why we use the standard 9 × 29-bit layout for a single product and the 5 × 51-bit layout for the paired product.
+
+The internal Montgomery factor of the 5 × 51-bit layout is
+$$R_{\mathrm{kernel}} = (2^{51})^5 = 2^{255},$$
+so one further step is needed to convert to the outer Montgomery factor $R = 2^{256}$:
+
+`reduce_and_finalize_paired_rne` first propagates signed carries through $t_0, t_1, t_2, t_3$, then 3 rho folds remove the bottom 3 limbs at once, then 2 ordinary Montgomery reductions remove 2 more 51-bit limbs, and finally a parity fix plus a fused halving/repack step converts from $R_{\mathrm{kernel}} = 2^{255}$ to the outer Montgomery factor $R = 2^{256}$. The two $m$-factors in the ordinary Montgomery phase are still computed with scalar 64-bit multiplications, because `wasm_i64x2_mul` is not attractive on current engines for this step.
+
+#### Bounds analysis
+The paired kernel is only used on coarse inputs, so
+$$aR < 2p,\qquad bR < 2p,\qquad aR \cdot bR < 4p^2.$$
+By the rho-fold bound above, and because we specifically choose the modulus bound
+$$p < \frac{\beta^5}{2} - \beta^4,$$
+the live window after the three rho folds satisfies
+$$y < 2 \beta^2 p - \beta p.$$
+
+Applying the ordinary Montgomery local bound $x' < x/\beta + p$ twice gives
+$$2 \beta^2 p - \beta p \;\longrightarrow\; 2 \beta p \;\longrightarrow\; 3p.$$
+The final parity fix adds at most one more copy of $p$, and the fused halving then yields
+$$\frac{3p + p}{2} = 2p.$$
+Since every preceding inequality is strict, the actual output is strictly less than $2p$. Thus the final 4 × 64-bit output is in coarse Montgomery form $[0, 2p)$, as required. No conditional subtraction is needed.
 
 ### Converting to and from Montgomery form
 Obviously we want to avoid using standard form division when converting between forms, so we use Montgomery form to convert to Montgomery form. If we look at a value $a\ mod\ p$ we can notice that this is the Montgomery form of $a\cdot R^{-1}\ mod\ p$, so if we want to get $aR$ from it, we need to multiply it by the Montgomery form of $R\ mod\ p$, which is $R\cdot R\ mod\ p$. So using Montgomery multiplication we compute
@@ -173,10 +248,10 @@ The assembly implementation for x86_64 is optimized. There are 2 versions:
 Implementation for WASM:
 
 We use 9 29-bit limbs for computation while keeping the canonical 4 × 64-bit storage and the same $R = 2^{256}$ Montgomery form as native. The reason for the different internal limb width is that WASM doesn't have:
-1. 128-bit result 64*64 bit multiplication
+1. 64 × 64-bit multiplication with a 128-bit result
 2. 64-bit addition with carry
 
-On WASM targets that also expose relaxed SIMD, an additional *paired* implementation (see [Paired Montgomery multiplication](#field_docs_paired_explainer)) computes two independent Montgomery products at once using a 5 × 51-bit `f64x2` SIMD pipeline. It is an opt-in API surface (`paired_mul`, `paired_sqr`, …); the standard `montgomery_mul` still uses the 9 × 29-bit pipeline.
+On WASM targets that also expose relaxed SIMD, there is also a *paired* implementation that computes two independent Montgomery products at once using a 5 × 51-bit `f64x2` SIMD pipeline. It is an opt-in API surface (`paired_mul`, `paired_sqr`, …); the standard `montgomery_mul` still uses the 9 × 29-bit pipeline. We could not simply convert the standard WASM kernel to SIMD, because that would require a natural lane-wise 64 × 64 → 128 multiplication path, which WASM SIMD does not provide in the form we need. This is why we use the standard 9 × 29-bit layout for a single product and the 5 × 51-bit layout for the paired product.
 
 In the past we implemented a version with 32-bit limbs, but as a result, when we accumulated limb products we always had to split 64-bit results of 32-bit multiplication back into 32-bit chunks. Had we not, the addition of 2 64-bit products would have lost the carry flag and the result would be incorrect. There were 2 issues with this:
 1. This spawned in a lot of masking operations
