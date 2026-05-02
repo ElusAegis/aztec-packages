@@ -300,8 +300,6 @@ reduce_and_finalize_paired_rne(const std::array<v128_t, 2 * WASM_PAIRED_NUM_LIMB
     //   ss < B ⇒ ss < B/β + p.
     // Chaining from ~β^2 * p: β p + p → 2p + p/β. Phase 5's halving absorbs
     // the residual p/β slack into the final < 2p contract.
-    // TODO: bench whether replacing the scalar m computation with an ez_mul-
-    // based path is faster (FMA throughput vs two i↔f boundary crossings).
     // TODO: try replacing the second CIOS step with a 52-bit reduction
     // (51 + 52 = 103 bits = kernel R → outer R shift). This would eliminate
     // phases 4-5 (parity fix + fused >>1) by absorbing the halve into the
