@@ -300,10 +300,6 @@ reduce_and_finalize_paired_rne(const std::array<v128_t, 2 * WASM_PAIRED_NUM_LIMB
     //   ss < B ⇒ ss < B/β + p.
     // Chaining from ~β^2 * p: β p + p → 2p + p/β. Phase 5's halving absorbs
     // the residual p/β slack into the final < 2p contract.
-    // TODO: try replacing the second CIOS step with a 52-bit reduction
-    // (51 + 52 = 103 bits = kernel R → outer R shift). This would eliminate
-    // phases 4-5 (parity fix + fused >>1) by absorbing the halve into the
-    // CIOS bit-width directly.
     BB_FORCE_UNROLL
     for (size_t i = 0; i < 2; ++i) {
         const uint64_t s_lane0 = static_cast<uint64_t>(wasm_i64x2_extract_lane(ss[i], 0));
