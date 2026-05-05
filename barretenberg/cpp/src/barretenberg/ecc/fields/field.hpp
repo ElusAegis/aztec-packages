@@ -13,5 +13,5 @@
  *        "paired_field_impl_generic.hpp" and "field_impl_x64.hpp" (which include "field_impl.hpp")
  */
 #include "./field_impl_generic.hpp"
-#include "./paired_field_impl_generic.hpp"
 #include "./field_impl_x64.hpp"
+#include "./paired_field_impl_generic.hpp"

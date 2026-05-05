@@ -45,7 +45,6 @@ struct Bn254Fq2Params {
     static constexpr fq frobenius_on_twisted_curve_y_1{
         0xa1d77ce45ffe77c7UL, 0x07affd117826d1dbUL, 0x6d16bd27bb7edc6bUL, 0x2c87200285defeccUL
     };
-
 };
 
 using fq2 = field2<fq, Bn254Fq2Params>;

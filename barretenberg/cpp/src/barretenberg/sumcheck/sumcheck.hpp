@@ -689,8 +689,7 @@ template <typename Flavor> class SumcheckProver {
                 const FF delta0 = poly[i + 1] - base0;
                 const FF delta1 = poly[i + 3] - base1;
 
-                const auto [product0, product1] =
-                    FF::paired_mul(round_challenge, delta0, round_challenge, delta1);
+                const auto [product0, product1] = FF::paired_mul(round_challenge, delta0, round_challenge, delta1);
                 dest_view[j].at(i >> 1) = base0 + product0;
                 dest_view[j].at((i + 2) >> 1) = base1 + product1;
             }

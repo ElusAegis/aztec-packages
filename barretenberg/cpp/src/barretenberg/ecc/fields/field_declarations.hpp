@@ -83,8 +83,7 @@ template <class Params_> struct alignas(32) field {
 #define WASM_RESULT_LOW_BITS (WASM_LIMB_BITS - WASM_FINAL_REDUCE_BITS)
 #define WASM_RESULT_LOW_MASK ((1ULL << WASM_RESULT_LOW_BITS) - 1)
 
-static_assert(8 * WASM_LIMB_BITS + WASM_FINAL_REDUCE_BITS == 256,
-              "WASM reduction widths must total 256 bits");
+    static_assert(8 * WASM_LIMB_BITS + WASM_FINAL_REDUCE_BITS == 256, "WASM reduction widths must total 256 bits");
 #endif
 
     // We don't initialize data in the default constructor since we'd lose a lot of time on huge array initializations.
@@ -329,18 +328,17 @@ static_assert(8 * WASM_LIMB_BITS + WASM_FINAL_REDUCE_BITS == 256,
     BB_INLINE constexpr bool operator!=(const field& other) const noexcept;
 
     BB_INLINE constexpr field to_montgomery_form() const noexcept;
-    BB_INLINE static constexpr std::array<field, 2> paired_to_montgomery_form(const field& a,
-                                                                              const field& b) noexcept;
+    BB_INLINE static constexpr std::array<field, 2> paired_to_montgomery_form(const field& a, const field& b) noexcept;
     BB_INLINE constexpr field from_montgomery_form() const noexcept;
     BB_INLINE static constexpr std::array<field, 2> paired_from_montgomery_form(const field& a,
                                                                                 const field& b) noexcept;
     // Reduced versions guarantee output is in canonical form [0, p)
     BB_INLINE constexpr field to_montgomery_form_reduced() const noexcept;
     BB_INLINE static constexpr std::array<field, 2> paired_to_montgomery_form_reduced(const field& a,
-                                                                                       const field& b) noexcept;
+                                                                                      const field& b) noexcept;
     BB_INLINE constexpr field from_montgomery_form_reduced() const noexcept;
     BB_INLINE static constexpr std::array<field, 2> paired_from_montgomery_form_reduced(const field& a,
-                                                                                         const field& b) noexcept;
+                                                                                        const field& b) noexcept;
 
     BB_INLINE constexpr field sqr() const noexcept;
     BB_INLINE static constexpr std::array<field, 2> paired_sqr(const field& a, const field& b) noexcept;
@@ -563,16 +561,15 @@ static_assert(8 * WASM_LIMB_BITS + WASM_FINAL_REDUCE_BITS == 256,
     BB_INLINE static constexpr void wasm_reduce_24(std::span<uint64_t, WASM_NUM_LIMBS> result);
     BB_INLINE static constexpr void wasm_reduce_yuval(std::span<uint64_t, WASM_NUM_LIMBS + 1> result);
     BB_INLINE static constexpr std::array<uint64_t, 4> wasm_reduce_and_pack(
-    std::array<uint64_t, 2 * WASM_NUM_LIMBS - 1>& temp);
+        std::array<uint64_t, 2 * WASM_NUM_LIMBS - 1>& temp);
     BB_INLINE static constexpr std::array<uint64_t, WASM_NUM_LIMBS> wasm_convert(const uint64_t* data);
 
     template <size_t N>
-    BB_INLINE static constexpr std::array<uint64_t, 2 * N - 1> wasm_schoolbook_mul(
-        const std::array<uint64_t, N>& a, const std::array<uint64_t, N>& b);
+    BB_INLINE static constexpr std::array<uint64_t, 2 * N - 1> wasm_schoolbook_mul(const std::array<uint64_t, N>& a,
+                                                                                   const std::array<uint64_t, N>& b);
 
     BB_INLINE static constexpr std::array<uint64_t, 2 * WASM_NUM_LIMBS - 1> wasm_karatsuba_mul(
-        const std::array<uint64_t, WASM_NUM_LIMBS>& left,
-        const std::array<uint64_t, WASM_NUM_LIMBS>& right);
+        const std::array<uint64_t, WASM_NUM_LIMBS>& left, const std::array<uint64_t, WASM_NUM_LIMBS>& right);
 #endif
     BB_INLINE static constexpr std::pair<uint64_t, uint64_t> mul_wide(uint64_t a, uint64_t b) noexcept;
 

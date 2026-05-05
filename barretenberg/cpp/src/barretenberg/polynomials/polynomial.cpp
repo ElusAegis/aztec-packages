@@ -284,8 +284,7 @@ void Polynomial<Fr>::add_scaled_chunk(const ThreadChunk& chunk,
     for (; i + 1 < range_end; i += 2) {
         const size_t index0 = other.start_index + i;
         const size_t index1 = other.start_index + i + 1;
-        const auto [product0, product1] =
-            Fr::paired_mul(scaling_factor, other[index0], scaling_factor, other[index1]);
+        const auto [product0, product1] = Fr::paired_mul(scaling_factor, other[index0], scaling_factor, other[index1]);
         at(index0) += product0;
         at(index1) += product1;
     }

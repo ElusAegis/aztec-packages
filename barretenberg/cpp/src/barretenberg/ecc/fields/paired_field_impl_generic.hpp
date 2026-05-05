@@ -26,8 +26,7 @@ inline constexpr size_t WASM_PAIRED_NUM_LIMBS = 5;
 // The paired end-to-end bound closes exactly when p < 2^254 - 2^204 = (2^62 - 2^12) * 2^192,
 // so the top limb of a largest safe field modulus is 2^62 - 2^12 - 1. This covers the
 // BN254 / Grumpkin field parameters.
-inline constexpr uint64_t WASM_PAIRED_MAX_MODULUS_3 =
-    MODULUS_TOP_LIMB_LARGE_THRESHOLD - (1ULL << 12) - 1;
+inline constexpr uint64_t WASM_PAIRED_MAX_MODULUS_3 = MODULUS_TOP_LIMB_LARGE_THRESHOLD - (1ULL << 12) - 1;
 
 // Anchors for the Emmart-Zheng two-FMA integer multiply: for a,b < 2^51 we
 // have a*b < 2^102, and the two FMAs split that 102-bit product into
@@ -60,7 +59,8 @@ BB_INLINE constexpr std::array<uint64_t, WASM_PAIRED_NUM_LIMBS> split_to_5x51(co
 }
 
 // Inverse of split_to_5x51, with a fused >>1 (kernel R=2^255 → outer R=2^256).
-BB_INLINE constexpr std::array<uint64_t, 4> pack_to_4x64_shr_1(const std::array<uint64_t, WASM_PAIRED_NUM_LIMBS>& l) noexcept
+BB_INLINE constexpr std::array<uint64_t, 4> pack_to_4x64_shr_1(
+    const std::array<uint64_t, WASM_PAIRED_NUM_LIMBS>& l) noexcept
 {
     return {
         (l[0] >> 1) | (l[1] << 50),
@@ -105,8 +105,7 @@ constexpr uint256_t compute_div_r_inv_local(const uint256_t& p, unsigned limb_bi
 
 template <class Params> struct paired_rne_constants {
     // Field modulus repacked into the 5x51 layout.
-    static constexpr std::array<uint64_t, WASM_PAIRED_NUM_LIMBS> u51_p =
-        split_to_5x51(field<Params>::modulus.data);
+    static constexpr std::array<uint64_t, WASM_PAIRED_NUM_LIMBS> u51_p = split_to_5x51(field<Params>::modulus.data);
     // Montgomery scalar n' = -p^{-1} mod 2^51, used by the two CIOS rounds.
     static constexpr uint64_t u51_np0 = compute_r_inv_local(field<Params>::modulus.data[0]);
     // rho[k-1] = beta^{-k} mod p (with beta = 2^51), used for parallel reductions.
@@ -114,8 +113,7 @@ template <class Params> struct paired_rne_constants {
         std::array<std::array<uint64_t, WASM_PAIRED_NUM_LIMBS>, 4> out{};
         for (unsigned k = 1; k <= 4; ++k) {
             out[k - 1] = split_to_5x51(
-                compute_div_r_inv_local(field<Params>::modulus, static_cast<unsigned>(WASM_PAIRED_LIMB_BITS) * k)
-                    .data);
+                compute_div_r_inv_local(field<Params>::modulus, static_cast<unsigned>(WASM_PAIRED_LIMB_BITS) * k).data);
         }
         return out;
     }();
@@ -151,9 +149,7 @@ BB_INLINE std::array<v128_t, 2> ez_mul(v128_t a, v128_t b) noexcept
 // Sibling of smult_noinit_paired_v128 below, which returns a fresh array instead.
 // Streams hi forward so each ts slot is written exactly once.
 template <size_t N>
-BB_INLINE void mul_accum_paired_row(v128_t a,
-                                    const std::array<v128_t, N>& bs,
-                                    std::span<v128_t, N + 1> ts) noexcept
+BB_INLINE void mul_accum_paired_row(v128_t a, const std::array<v128_t, N>& bs, std::span<v128_t, N + 1> ts) noexcept
 {
     static_assert(N >= 1, "mul_accum_paired_row requires at least one b limb");
     // h_prev=0 so j=0's add(h_prev, l) folds to `l`.
@@ -198,7 +194,8 @@ BB_INLINE std::array<v128_t, WASM_PAIRED_NUM_LIMBS + 1> smult_noinit_paired_v128
 
 // One carry-propagation pass: bits past 51 in each of t[0..NUM_LIMBS-2] are folded into
 // t[i+1]. The top limb t[NUM_LIMBS-1] is left wider — pack_to_4x64_shr_1 consumes it directly.
-BB_INLINE std::array<v128_t, WASM_PAIRED_NUM_LIMBS> redundant_carry_paired_v128(const std::array<v128_t, WASM_PAIRED_NUM_LIMBS>& t) noexcept
+BB_INLINE std::array<v128_t, WASM_PAIRED_NUM_LIMBS> redundant_carry_paired_v128(
+    const std::array<v128_t, WASM_PAIRED_NUM_LIMBS>& t) noexcept
 {
     const v128_t WASM_PAIRED_LIMB_MASK_V = wasm_i64x2_const_splat(static_cast<int64_t>(WASM_PAIRED_LIMB_MASK));
     std::array<v128_t, WASM_PAIRED_NUM_LIMBS> res{};
@@ -216,7 +213,8 @@ BB_INLINE std::array<v128_t, WASM_PAIRED_NUM_LIMBS> redundant_carry_paired_v128(
 // Per-lane constant-time conditional add: if a lane's lowest bit is set, add
 // B to that lane, otherwise leave it unchanged.
 template <std::array<uint64_t, WASM_PAIRED_NUM_LIMBS> B>
-BB_INLINE std::array<v128_t, WASM_PAIRED_NUM_LIMBS> reduce_ct_paired_v128(const std::array<v128_t, WASM_PAIRED_NUM_LIMBS>& a) noexcept
+BB_INLINE std::array<v128_t, WASM_PAIRED_NUM_LIMBS> reduce_ct_paired_v128(
+    const std::array<v128_t, WASM_PAIRED_NUM_LIMBS>& a) noexcept
 {
     const v128_t lsb = wasm_v128_and(a[0], wasm_i64x2_const_splat(1));
     const v128_t mask = wasm_i64x2_neg(lsb);
@@ -252,8 +250,8 @@ BB_INLINE std::array<v128_t, WASM_PAIRED_NUM_LIMBS> reduce_ct_paired_v128(const 
 //      >>1 performs the halving from phase 4. The output remains in relaxed
 //      Montgomery form (< 2*p).
 template <class Params>
-BB_INLINE std::array<std::array<uint64_t, 4>, 2>
-reduce_and_finalize_paired_rne(const std::array<v128_t, 2 * WASM_PAIRED_NUM_LIMBS>& t_in) noexcept
+BB_INLINE std::array<std::array<uint64_t, 4>, 2> reduce_and_finalize_paired_rne(
+    const std::array<v128_t, 2 * WASM_PAIRED_NUM_LIMBS>& t_in) noexcept
 {
     using constants = paired_rne_constants<Params>;
 
@@ -306,8 +304,7 @@ reduce_and_finalize_paired_rne(const std::array<v128_t, 2 * WASM_PAIRED_NUM_LIMB
         const uint64_t s_lane1 = static_cast<uint64_t>(wasm_i64x2_extract_lane(ss[i], 1));
         const uint64_t m_lane0 = (s_lane0 * constants::u51_np0) & WASM_PAIRED_LIMB_MASK;
         const uint64_t m_lane1 = (s_lane1 * constants::u51_np0) & WASM_PAIRED_LIMB_MASK;
-        const v128_t m =
-            wasm_i64x2_make(static_cast<int64_t>(m_lane0), static_cast<int64_t>(m_lane1));
+        const v128_t m = wasm_i64x2_make(static_cast<int64_t>(m_lane0), static_cast<int64_t>(m_lane1));
         const auto mp = smult_noinit_paired_v128<constants::u51_p>(m);
         BB_FORCE_UNROLL
         for (size_t k = 0; k < WASM_PAIRED_NUM_LIMBS + 1; ++k) {
@@ -429,15 +426,11 @@ template <class T> constexpr std::array<field<T>, 2> field<T>::paired_sqr(const 
             mul_accum_paired_row(a_vecs[0],
                                  std::array<v128_t, 4>{ a_vecs[1], a_vecs[2], a_vecs[3], a_vecs[4] },
                                  std::span(ts).subspan<1, 5>());
-            mul_accum_paired_row(a_vecs[1],
-                                 std::array<v128_t, 3>{ a_vecs[2], a_vecs[3], a_vecs[4] },
-                                 std::span(ts).subspan<3, 4>());
-            mul_accum_paired_row(a_vecs[2],
-                                 std::array<v128_t, 2>{ a_vecs[3], a_vecs[4] },
-                                 std::span(ts).subspan<5, 3>());
-            mul_accum_paired_row(a_vecs[3],
-                                 std::array<v128_t, 1>{ a_vecs[4] },
-                                 std::span(ts).subspan<7, 2>());
+            mul_accum_paired_row(
+                a_vecs[1], std::array<v128_t, 3>{ a_vecs[2], a_vecs[3], a_vecs[4] }, std::span(ts).subspan<3, 4>());
+            mul_accum_paired_row(
+                a_vecs[2], std::array<v128_t, 2>{ a_vecs[3], a_vecs[4] }, std::span(ts).subspan<5, 3>());
+            mul_accum_paired_row(a_vecs[3], std::array<v128_t, 1>{ a_vecs[4] }, std::span(ts).subspan<7, 2>());
 
             BB_FORCE_UNROLL
             for (size_t k = 1; k < 2 * WASM_PAIRED_NUM_LIMBS - 1; ++k) {

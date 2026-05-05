@@ -636,8 +636,7 @@ constexpr void field<T>::wasm_madd(uint64_t left_limb,
  * @note For our application, we require bounds on the output limbs (especially result_8). For information on how we
  * deduce these, please see where this method is called.
  */
-template <class T>
-constexpr void field<T>::wasm_reduce_29(std::span<uint64_t, WASM_NUM_LIMBS> result)
+template <class T> constexpr void field<T>::wasm_reduce_29(std::span<uint64_t, WASM_NUM_LIMBS> result)
 {
     constexpr uint64_t r_inv = T::r_inv & WASM_LIMB_MASK; // -(modulus^{-1}) modulo 2^WASM_LIMB_BITS
     uint64_t k = (result[0] * r_inv) & WASM_LIMB_MASK;
@@ -652,13 +651,12 @@ constexpr void field<T>::wasm_reduce_29(std::span<uint64_t, WASM_NUM_LIMBS> resu
 /**
  * @brief Like wasm_reduce_29 but zeroes only the lowest 24 bits of result_0 (bits 24..28 are kept as result data).
  */
-template <class T>
-constexpr void field<T>::wasm_reduce_24(std::span<uint64_t, WASM_NUM_LIMBS> result)
+template <class T> constexpr void field<T>::wasm_reduce_24(std::span<uint64_t, WASM_NUM_LIMBS> result)
 {
     constexpr uint64_t r_inv = T::r_inv & WASM_FINAL_REDUCE_MASK; // -(modulus^{-1}) modulo 2^WASM_FINAL_REDUCE_BITS
     uint64_t k = (result[0] * r_inv) & WASM_FINAL_REDUCE_MASK;
     result[0] += k * wasm_modulus[0];
-    result[1] += k * wasm_modulus[1] + (result[0] >> WASM_LIMB_BITS);  // Carry shifts by the limb width.
+    result[1] += k * wasm_modulus[1] + (result[0] >> WASM_LIMB_BITS); // Carry shifts by the limb width.
     BB_FORCE_UNROLL
     for (size_t i = 2; i < WASM_NUM_LIMBS; ++i) {
         result[i] += k * wasm_modulus[i];
@@ -685,8 +683,7 @@ constexpr void field<T>::wasm_reduce_24(std::span<uint64_t, WASM_NUM_LIMBS> resu
  *
  * @note For a reference, please see: https://hackmd.io/@Ingonyama/Barret-Montgomery
  */
-template <class T>
-constexpr void field<T>::wasm_reduce_yuval(std::span<uint64_t, WASM_NUM_LIMBS + 1> result)
+template <class T> constexpr void field<T>::wasm_reduce_yuval(std::span<uint64_t, WASM_NUM_LIMBS + 1> result)
 {
     const uint64_t result_0_masked = result[0] & WASM_LIMB_MASK;
     result[1] += result_0_masked * wasm_r_inv[0] + (result[0] >> WASM_LIMB_BITS);
