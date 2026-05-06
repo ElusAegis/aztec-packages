@@ -384,22 +384,37 @@ template <class T> constexpr void field<T>::self_reduce_once() & noexcept
 
 template <class T> constexpr field<T> field<T>::pow(const uint256_t& exponent) const noexcept
 {
-    field accumulator{ data[0], data[1], data[2], data[3] };
-    field to_mul{ data[0], data[1], data[2], data[3] };
-    const uint64_t maximum_set_bit = exponent.get_msb();
+    if (exponent == uint256_t(0)) {
+        return one();
+    }
+    if (*this == zero()) {
+        return zero();
+    }
 
-    for (int i = static_cast<int>(maximum_set_bit) - 1; i >= 0; --i) {
-        accumulator.self_sqr();
-        if (exponent.get_bit(static_cast<uint64_t>(i))) {
-            accumulator *= to_mul;
+    // Right-to-left binary: per set bit, (result*base, base*base) are independent and fuse into one paired_mul.
+    field result = one();
+    field base{ data[0], data[1], data[2], data[3] };
+    const uint64_t msb = exponent.get_msb();
+
+    for (uint64_t i = 0; i < msb; ++i) {
+        if (exponent.get_bit(i)) {
+            // On relaxed-SIMD WASM, fuse (result*base, base*base) into one paired_mul
+            // pipeline. On other targets, an explicit mul + self_sqr is faster because
+            // paired_mul's fallback would replace the faster squaring with multiplying.
+            // PERF: a fused mul_sqr primitive could subsume both branches.
+#if defined(__wasm_relaxed_simd__) && defined(__wasm__)
+            std::tie(result, base) = paired_mul(result, base, base, base);
+#else
+            result *= base;
+            base.self_sqr();
+#endif
+        } else {
+            base.self_sqr();
         }
     }
-    if (exponent == uint256_t(0)) {
-        accumulator = one();
-    } else if (*this == zero()) {
-        accumulator = zero();
-    }
-    return accumulator;
+    // MSB is always set; final fold is a single multiply.
+    result *= base;
+    return result;
 }
 
 template <class T> constexpr field<T> field<T>::pow(const uint64_t exponent) const noexcept
