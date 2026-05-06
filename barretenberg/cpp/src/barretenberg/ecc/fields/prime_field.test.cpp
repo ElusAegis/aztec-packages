@@ -602,7 +602,7 @@ TYPED_TEST(PrimeFieldTest, BoundaryArithmetic)
     using F = TypeParam;
     constexpr std::array<uint64_t, 3> offsets = { 1, 2, 3 };
 
-    for (uint64_t offset : offsets) {
+    for (const auto& offset : offsets) {
         F a;
         if constexpr (F::modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
             // 256-bit fields: construct element with internal representation near 2^256 - offset.
@@ -658,7 +658,7 @@ TYPED_TEST(PrimeFieldTest, PairedBoundaryMul)
     using F = TypeParam;
     constexpr std::array<uint64_t, 3> offsets = { 1, 2, 3 };
 
-    for (uint64_t offset : offsets) {
+    for (const auto& offset : offsets) {
         F a;
         if constexpr (F::modulus.data[3] >= MODULUS_TOP_LIMB_LARGE_THRESHOLD) {
             // 256-bit fields: construct element with internal representation near 2^256 - offset.
