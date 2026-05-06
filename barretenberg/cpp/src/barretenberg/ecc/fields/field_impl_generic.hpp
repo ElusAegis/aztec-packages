@@ -495,7 +495,7 @@ template <class T> constexpr field<T> field<T>::montgomery_mul_big(const field& 
     std::array<uint64_t, 9> v;
     BB_FORCE_UNROLL
     for (size_t i = 0; i < 8; ++i) {
-        v[i] = ((temp[8 + i] >> WASM_FINAL_REDUCE_BITS) | (temp[9 + i] << WASM_RESULT_LOW_BITS)) & WASM_LIMB_MASK;
+        v[i] = ((temp[8 + i] >> WASM_FINAL_REDUCE_BITS) | (temp[9 + i] << WASM_FINAL_REMAINDER_BITS)) & WASM_LIMB_MASK;
     }
     v[8] = temp[16] >> WASM_FINAL_REDUCE_BITS; // bits 232..256 (25 bits incl. overflow)
 
@@ -731,7 +731,7 @@ constexpr std::array<uint64_t, 4> field<T>::wasm_reduce_and_pack(std::array<uint
 
     // wasm_reduce_24 leaves bits 0..23 zero and bits 29+ already propagated to temp[9]; shift
     // the 5 result bits at positions 24..28 down to positions 0..4 so temp[8] packs uniformly.
-    temp[8] = (temp[8] >> WASM_FINAL_REDUCE_BITS) & WASM_RESULT_LOW_MASK;
+    temp[8] = (temp[8] >> WASM_FINAL_REDUCE_BITS) & WASM_FINAL_REMAINDER_MASK;
     BB_FORCE_UNROLL
     for (size_t i = 9; i < 16; ++i) {
         temp[i + 1] += temp[i] >> WASM_LIMB_BITS;

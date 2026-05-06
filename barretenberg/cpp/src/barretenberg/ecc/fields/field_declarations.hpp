@@ -71,19 +71,20 @@ template <class Params_> struct alignas(32) field {
     static constexpr size_t PUBLIC_INPUTS_SIZE = Params::PUBLIC_INPUTS_SIZE;
 
 #if defined(__wasm__) || !defined(__SIZEOF_INT128__)
+// Limb layout for the WASM Montgomery backend.
 #define WASM_NUM_LIMBS 9
 #define WASM_LIMB_BITS 29
-#define WASM_LIMB_MASK ((1ULL << WASM_LIMB_BITS) - 1)
-
-// Final reduction step zeroes 24 bits to complete Montgomery R = 2^256.
+// Bits zeroed by the final Montgomery reduction step to complete R = 2^256.
 #define WASM_FINAL_REDUCE_BITS 24
-#define WASM_FINAL_REDUCE_MASK ((1ULL << WASM_FINAL_REDUCE_BITS) - 1)
-
-// Result high bits left in the limb after the final reduction.
-#define WASM_RESULT_LOW_BITS (WASM_LIMB_BITS - WASM_FINAL_REDUCE_BITS)
-#define WASM_RESULT_LOW_MASK ((1ULL << WASM_RESULT_LOW_BITS) - 1)
+// Residue width left untouched by the final Montgomery reduction of the final lower limb.
+#define WASM_FINAL_REMAINDER_BITS (WASM_LIMB_BITS - WASM_FINAL_REDUCE_BITS)
 
     static_assert(8 * WASM_LIMB_BITS + WASM_FINAL_REDUCE_BITS == 256, "WASM reduction widths must total 256 bits");
+
+    // Typed bit masks derived from the widths above.
+    static constexpr uint64_t WASM_LIMB_MASK = (1ULL << WASM_LIMB_BITS) - 1;
+    static constexpr uint64_t WASM_FINAL_REDUCE_MASK = (1ULL << WASM_FINAL_REDUCE_BITS) - 1;
+    static constexpr uint64_t WASM_FINAL_REMAINDER_MASK = (1ULL << WASM_FINAL_REMAINDER_BITS) - 1;
 #endif
 
     // We don't initialize data in the default constructor since we'd lose a lot of time on huge array initializations.
