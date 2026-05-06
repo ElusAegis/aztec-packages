@@ -28,6 +28,11 @@ inline constexpr size_t WASM_PAIRED_NUM_LIMBS = 5;
 // BN254 / Grumpkin field parameters.
 inline constexpr uint64_t WASM_PAIRED_MAX_MODULUS_3 = MODULUS_TOP_LIMB_LARGE_THRESHOLD - (1ULL << 12) - 1;
 
+// Type-level predicate: true when the runtime supports relaxed-SIMD AND the field's
+// modulus fits within the paired-bound proof's range. Drives the single guard in
+// paired_mul / paired_sqr.
+template <class Params> inline constexpr bool supports_paired_simd = Params::modulus_3 <= WASM_PAIRED_MAX_MODULUS_3;
+
 // Anchors for the Emmart-Zheng two-FMA integer multiply: for a,b < 2^51 we
 // have a*b < 2^102, and the two FMAs split that 102-bit product into
 //   p_hi = a*b + C1 + delta
@@ -229,9 +234,9 @@ BB_INLINE std::array<v128_t, WASM_PAIRED_NUM_LIMBS> reduce_ct_paired_v128(
 
 // Reduces a paired column accumulator t_in (each lane holding the schoolbook
 // output of a*b with both inputs in relaxed Montgomery form < 2*p, so per-lane
-// value < 4*p^2 in the 5x51 layout) modulo R = 2^256, and returns the result as
-// a pair of 4x64 limb arrays — one per SIMD lane. Output is also in relaxed
-// Montgomery form (< 2*p), matching the rest of the lazy-reduction field API.
+// value < 4*p^2 in the 5x51 layout) modulo R = 2^256, and returns a pair of
+// field<Params> — one per SIMD lane. Output is in relaxed Montgomery form
+// (< 2*p), matching the rest of the lazy-reduction field API.
 //
 // The five reduction phases are:
 //   1. Signed carry propagation through t[0..3], normalizing the low half so
@@ -250,7 +255,7 @@ BB_INLINE std::array<v128_t, WASM_PAIRED_NUM_LIMBS> reduce_ct_paired_v128(
 //      >>1 performs the halving from phase 4. The output remains in relaxed
 //      Montgomery form (< 2*p).
 template <class Params>
-BB_INLINE std::array<std::array<uint64_t, 4>, 2> reduce_and_finalize_paired_rne(
+BB_INLINE std::array<field<Params>, 2> reduce_and_finalize_paired_rne(
     const std::array<v128_t, 2 * WASM_PAIRED_NUM_LIMBS>& t_in) noexcept
 {
     using constants = paired_rne_constants<Params>;
@@ -331,7 +336,26 @@ BB_INLINE std::array<std::array<uint64_t, 4>, 2> reduce_and_finalize_paired_rne(
         out2_u255[k] = static_cast<uint64_t>(wasm_i64x2_extract_lane(normalized[k], 1));
     }
 
-    return { pack_to_4x64_shr_1(out1_u255), pack_to_4x64_shr_1(out2_u255) };
+    const auto out1 = pack_to_4x64_shr_1(out1_u255);
+    const auto out2 = pack_to_4x64_shr_1(out2_u255);
+    return { field<Params>{ out1[0], out1[1], out1[2], out1[3] }, field<Params>{ out2[0], out2[1], out2[2], out2[3] } };
+}
+
+// Pack two field elements (4x64) into the paired 5x51 SIMD layout: lane 0
+// carries lane0's limbs, lane 1 carries lane1's. Inputs are converted to
+// f64 via the bias trick (see i2f_v128) so they can feed ez_mul directly.
+template <class Params>
+BB_INLINE std::array<v128_t, WASM_PAIRED_NUM_LIMBS> pack_paired_lanes(const field<Params>& lane0,
+                                                                      const field<Params>& lane1) noexcept
+{
+    const auto l0 = split_to_5x51(lane0.data);
+    const auto l1 = split_to_5x51(lane1.data);
+    std::array<v128_t, WASM_PAIRED_NUM_LIMBS> out;
+    BB_FORCE_UNROLL
+    for (size_t k = 0; k < WASM_PAIRED_NUM_LIMBS; ++k) {
+        out[k] = i2f_v128(wasm_i64x2_make(static_cast<int64_t>(l0[k]), static_cast<int64_t>(l1[k])));
+    }
+    return out;
 }
 
 } // namespace detail
@@ -356,20 +380,9 @@ constexpr std::array<field<T>, 2> field<T>::paired_mul(const field& a,
         if (!std::is_constant_evaluated()) {
             using namespace detail;
 
-            // Pack inputs into paired 5x51 SIMD lanes — lane 0 holds (a, b),
-            // lane 1 holds (c, d).
-            const auto a1 = split_to_5x51(a.data);
-            const auto a2 = split_to_5x51(c.data);
-            const auto b1 = split_to_5x51(b.data);
-            const auto b2 = split_to_5x51(d.data);
-
-            std::array<v128_t, WASM_PAIRED_NUM_LIMBS> a_vecs;
-            std::array<v128_t, WASM_PAIRED_NUM_LIMBS> b_vecs;
-            BB_FORCE_UNROLL
-            for (size_t k = 0; k < WASM_PAIRED_NUM_LIMBS; ++k) {
-                a_vecs[k] = i2f_v128(wasm_i64x2_make(static_cast<int64_t>(a1[k]), static_cast<int64_t>(a2[k])));
-                b_vecs[k] = i2f_v128(wasm_i64x2_make(static_cast<int64_t>(b1[k]), static_cast<int64_t>(b2[k])));
-            }
+            // Pack inputs into paired 5x51 SIMD lanes — lane 0 holds (a, b), lane 1 holds (c, d).
+            const auto a_vecs = pack_paired_lanes<T>(a, c);
+            const auto b_vecs = pack_paired_lanes<T>(b, d);
 
             // Seed the 10 column accumulators with the FMA bias-cancellation values.
             std::array<v128_t, 2 * WASM_PAIRED_NUM_LIMBS> ts;
@@ -378,18 +391,15 @@ constexpr std::array<field<T>, 2> field<T>::paired_mul(const field& a,
                 ts[k] = wasm_i64x2_splat(make_initial(LO_BIAS_COUNTS[k], HI_BIAS_COUNTS[k]));
             }
 
-            // 5x5 schoolbook: each row streams its p_hi forward into the next
-            // column, so every column is touched exactly once per row.
+            // 5x5 schoolbook: each row streams its p_hi forward into the next column,
+            // so every column is touched exactly once per row.
             mul_accum_paired_row(a_vecs[0], b_vecs, std::span(ts).subspan<0, 6>());
             mul_accum_paired_row(a_vecs[1], b_vecs, std::span(ts).subspan<1, 6>());
             mul_accum_paired_row(a_vecs[2], b_vecs, std::span(ts).subspan<2, 6>());
             mul_accum_paired_row(a_vecs[3], b_vecs, std::span(ts).subspan<3, 6>());
             mul_accum_paired_row(a_vecs[4], b_vecs, std::span(ts).subspan<4, 6>());
 
-            // Reduce mod p and emit the 4x64 layout per lane.
-            const auto results = reduce_and_finalize_paired_rne<T>(ts);
-            return { field{ results[0][0], results[0][1], results[0][2], results[0][3] },
-                     field{ results[1][0], results[1][1], results[1][2], results[1][3] } };
+            return reduce_and_finalize_paired_rne<T>(ts);
         }
     }
 #endif
@@ -407,21 +417,13 @@ template <class T> constexpr std::array<field<T>, 2> field<T>::paired_sqr(const 
         if (!std::is_constant_evaluated()) {
             using namespace detail;
 
-            // Pack inputs into paired 5x51 SIMD lanes — lane 0 holds a, lane
-            // 1 holds b.
-            const auto a1 = split_to_5x51(a.data);
-            const auto a2 = split_to_5x51(b.data);
+            // Pack inputs into paired 5x51 SIMD lanes — lane 0 holds a, lane 1 holds b.
+            const auto a_vecs = pack_paired_lanes<T>(a, b);
 
-            std::array<v128_t, WASM_PAIRED_NUM_LIMBS> a_vecs;
-            BB_FORCE_UNROLL
-            for (size_t k = 0; k < WASM_PAIRED_NUM_LIMBS; ++k) {
-                a_vecs[k] = i2f_v128(wasm_i64x2_make(static_cast<int64_t>(a1[k]), static_cast<int64_t>(a2[k])));
-            }
-
-            // Triangular schoolbook: accumulate off-diagonal a_i * a_j (i < j)
-            // products first, double them with an i64x2 self-add, then add the
-            // five diagonal a_i * a_i products. Bias seeds go in last so the
-            // doubling step doesn't double them.
+            // Triangular schoolbook: accumulate off-diagonal a_i * a_j (i < j) products
+            // first, double them with an i64x2 self-add, then add the five diagonal
+            // a_i * a_i products. Bias seeds go in last so the doubling step doesn't
+            // double them.
             std::array<v128_t, 2 * WASM_PAIRED_NUM_LIMBS> ts{};
             mul_accum_paired_row(a_vecs[0],
                                  std::array<v128_t, 4>{ a_vecs[1], a_vecs[2], a_vecs[3], a_vecs[4] },
@@ -443,19 +445,15 @@ template <class T> constexpr std::array<field<T>, 2> field<T>::paired_sqr(const 
             mul_accum_paired_row(a_vecs[3], std::array<v128_t, 1>{ a_vecs[3] }, std::span(ts).subspan<6, 2>());
             mul_accum_paired_row(a_vecs[4], std::array<v128_t, 1>{ a_vecs[4] }, std::span(ts).subspan<8, 2>());
 
-            // Add bias seeds. The doubled off-diagonals + diagonals produce
-            // the same per-column p_lo / p_hi histogram as a full 5x5
-            // multiplication, so LO_BIAS_COUNTS / HI_BIAS_COUNTS apply
-            // unchanged.
+            // Add bias seeds. The doubled off-diagonals + diagonals produce the same
+            // per-column p_lo / p_hi histogram as a full 5x5 multiplication, so
+            // LO_BIAS_COUNTS / HI_BIAS_COUNTS apply unchanged.
             BB_FORCE_UNROLL
             for (size_t k = 0; k < 2 * WASM_PAIRED_NUM_LIMBS; ++k) {
                 ts[k] = wasm_i64x2_add(ts[k], wasm_i64x2_splat(make_initial(LO_BIAS_COUNTS[k], HI_BIAS_COUNTS[k])));
             }
 
-            // Reduce mod p and emit the 4x64 layout per lane.
-            const auto results = reduce_and_finalize_paired_rne<T>(ts);
-            return { field{ results[0][0], results[0][1], results[0][2], results[0][3] },
-                     field{ results[1][0], results[1][1], results[1][2], results[1][3] } };
+            return reduce_and_finalize_paired_rne<T>(ts);
         }
     }
 #endif
