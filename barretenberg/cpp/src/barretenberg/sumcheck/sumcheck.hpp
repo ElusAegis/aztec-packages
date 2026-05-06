@@ -684,8 +684,8 @@ template <typename Flavor> class SumcheckProver {
 
             // Pair-stride: paired_mul is faster than two singles; fuses two consecutive folds per iteration.
             for (; i + 3 < limit; i += 4) {
-                const FF base0 = poly[i];
-                const FF base1 = poly[i + 2];
+                const auto& base0 = poly[i];
+                const auto& base1 = poly[i + 2];
                 const FF delta0 = poly[i + 1] - base0;
                 const FF delta1 = poly[i + 3] - base1;
 
