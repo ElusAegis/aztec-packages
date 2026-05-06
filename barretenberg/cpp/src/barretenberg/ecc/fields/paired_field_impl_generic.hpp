@@ -47,7 +47,7 @@ inline constexpr std::array<uint64_t, 2 * WASM_PAIRED_NUM_LIMBS> LO_BIAS_COUNTS 
 inline constexpr std::array<uint64_t, 2 * WASM_PAIRED_NUM_LIMBS> HI_BIAS_COUNTS = { 0, 1, 2, 3, 8, 10, 9, 8, 7, 2 };
 
 // Repack an x < 2^255 (4x64 little-endian) into the paired-RNE 5x51 layout.
-BB_INLINE constexpr std::array<uint64_t, WASM_PAIRED_NUM_LIMBS> split_to_5x51(const uint64_t (&l)[4]) noexcept
+BB_INLINE constexpr std::array<uint64_t, WASM_PAIRED_NUM_LIMBS> split_to_5x51(std::span<const uint64_t, 4> l) noexcept
 {
     return {
         l[0] & WASM_PAIRED_LIMB_MASK,
