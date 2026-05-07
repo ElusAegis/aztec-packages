@@ -19,18 +19,19 @@
 //   "wrapper TF status" line below reflects the JS wrapper's tier.
 //
 // Artifact selection:
-//   When `--wasm <path>` is not supplied, the freshest barretenberg.wasm in known
-//   build directories is auto-picked by mtime. This is convenient during local
-//   iteration but means an unrelated rebuild elsewhere can silently change which
-//   binary gets benchmarked. Pass `--wasm <path>` explicitly when comparing two
-//   committed builds.
+//   The harness uses a single canonical build directory (`build-wasm-threads-simd`)
+//   and rebuilds `barretenberg.wasm` via `cmake --build` before every run, so the
+//   binary under test always matches the current source tree. Pass `--wasm <path>`
+//   to bypass the rebuild and load a specific artifact instead — useful for
+//   comparing two pre-built wasm files (e.g. against a different git commit).
+//   Pass `--no-rebuild` to skip the rebuild but keep the canonical path.
 
+import { spawnSync } from 'node:child_process';
 import { randomFillSync } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { gunzipSync } from 'node:zlib';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,12 +56,16 @@ const DEFAULT_WARMUP = 100_000;
 const DEFAULT_INITIAL_PAGES = 35;
 const DEFAULT_MAX_PAGES = 2 ** 16;
 
+const CANONICAL_BUILD_DIR = path.resolve(__dirname, '../../cpp/build-wasm-threads-simd');
+const CANONICAL_WASM_PATH = path.join(CANONICAL_BUILD_DIR, 'bin', 'barretenberg.wasm');
+
 function parseArgs(argv) {
   const options = {
     field: 'all',
     iterations: DEFAULT_ITERATIONS,
     warmup: DEFAULT_WARMUP,
     wasmPath: undefined,
+    rebuild: true,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -91,10 +96,16 @@ function parseArgs(argv) {
     }
     if (arg === '--wasm' && argv[i + 1]) {
       options.wasmPath = argv[++i];
+      options.rebuild = false;
       continue;
     }
     if (arg.startsWith('--wasm=')) {
       options.wasmPath = arg.slice('--wasm='.length);
+      options.rebuild = false;
+      continue;
+    }
+    if (arg === '--no-rebuild') {
+      options.rebuild = false;
       continue;
     }
     if (arg === '--help' || arg === '-h') {
@@ -130,8 +141,35 @@ Options:
   --field <fr|fq|all>      Which field export set to benchmark. Default: all
   --iterations <count>     Timed iterations per benchmark. Default: ${DEFAULT_ITERATIONS}
   --warmup <count>         Warmup iterations before timing. Default: ${DEFAULT_WARMUP}
-  --wasm <path>            Override the wasm artifact to load
+  --wasm <path>            Load this wasm artifact instead of rebuilding the
+                           canonical one. Disables the rebuild step.
+  --no-rebuild             Skip the rebuild step but still load the canonical
+                           artifact at ${CANONICAL_WASM_PATH}.
+
+By default the script rebuilds the canonical wasm via:
+  cmake --build ${CANONICAL_BUILD_DIR} --target barretenberg.wasm
 `);
+}
+
+function rebuildCanonicalWasm() {
+  if (!existsSync(CANONICAL_BUILD_DIR)) {
+    throw new Error(
+      `Canonical build directory not configured: ${CANONICAL_BUILD_DIR}\n` +
+        `Configure it once with: cmake --preset wasm-threads-simd -S ${path.resolve(CANONICAL_BUILD_DIR, '..')}`,
+    );
+  }
+  console.log(`Rebuilding ${CANONICAL_WASM_PATH} ...`);
+  const result = spawnSync(
+    'cmake',
+    ['--build', CANONICAL_BUILD_DIR, '--target', 'barretenberg.wasm'],
+    { stdio: 'inherit' },
+  );
+  if (result.status !== 0) {
+    throw new Error(`cmake --build failed with exit code ${result.status}`);
+  }
+  if (!existsSync(CANONICAL_WASM_PATH)) {
+    throw new Error(`Build succeeded but ${CANONICAL_WASM_PATH} is missing`);
+  }
 }
 
 function resolveWasmPath(explicitPath) {
@@ -142,36 +180,17 @@ function resolveWasmPath(explicitPath) {
     }
     return resolved;
   }
-
-  const candidates = [
-    '../../cpp/build-wasm-threads-simd-fma/bin/barretenberg.wasm',
-    '../../cpp/build-wasm-threads-simd-fma/bin/barretenberg.wasm.gz',
-    '../../cpp/build-wasm-threads-simd-standard/bin/barretenberg.wasm',
-    '../../cpp/build-wasm-threads-simd-standard/bin/barretenberg.wasm.gz',
-    '../../cpp/build-wasm-threads-simd-default/bin/barretenberg.wasm',
-    '../../cpp/build-wasm-threads-simd-default/bin/barretenberg.wasm.gz',
-    '../../cpp/build-wasm-threads-simd/bin/barretenberg.wasm',
-    '../../cpp/build-wasm-threads-simd/bin/barretenberg.wasm.gz',
-    '../../cpp/build-wasm-threads/bin/barretenberg.wasm',
-    '../../cpp/build-wasm-threads/bin/barretenberg.wasm.gz',
-    '../dest/node/barretenberg_wasm/barretenberg-threads.wasm.gz',
-  ].map(relativePath => path.resolve(__dirname, relativePath));
-
-  const existing = candidates
-    .filter(candidate => existsSync(candidate))
-    .map(candidate => ({ candidate, mtimeMs: statSync(candidate).mtimeMs }))
-    .sort((left, right) => right.mtimeMs - left.mtimeMs);
-
-  if (existing.length > 0) {
-    return existing[0].candidate;
+  if (!existsSync(CANONICAL_WASM_PATH)) {
+    throw new Error(
+      `Canonical wasm not present at ${CANONICAL_WASM_PATH}.\n` +
+        `Either run with default rebuild enabled, or pass --wasm <path> to load a specific artifact.`,
+    );
   }
-
-  throw new Error('Could not find a barretenberg wasm artifact. Pass one explicitly with --wasm <path>.');
+  return CANONICAL_WASM_PATH;
 }
 
 function loadWasmBytes(wasmPath) {
-  const file = readFileSync(wasmPath);
-  return wasmPath.endsWith('.gz') ? gunzipSync(file) : file;
+  return readFileSync(wasmPath);
 }
 
 function readCString(memory, addr) {
@@ -396,8 +415,10 @@ function runFieldBenchmark(exports, memory, fieldConfig, fieldBytes, iterations,
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.rebuild) {
+    rebuildCanonicalWasm();
+  }
   const wasmPath = resolveWasmPath(options.wasmPath);
-  const wasmAutoPicked = options.wasmPath === undefined;
   const bytes = loadWasmBytes(wasmPath);
   const { instance, memory, shared } = await instantiateBarretenberg(bytes);
   const exports = instance.exports;
@@ -417,7 +438,7 @@ async function main() {
   const fieldBytes = Number(exports.wasm_bench_field_element_size_bytes());
   const v8Helpers = createV8Helpers();
 
-  console.log(`WASM: ${wasmPath}${wasmAutoPicked ? ' (auto-picked by mtime; pass --wasm for reproducible runs)' : ''}`);
+  console.log(`WASM: ${wasmPath}${options.rebuild ? ' (freshly rebuilt)' : ' (rebuild skipped)'}`);
   console.log(`Memory import: ${shared ? 'shared' : 'unshared'}`);
   console.log(`TurboFan natives: ${v8Helpers ? 'enabled' : 'unavailable (run with --allow-natives-syntax to force optimization)'}`);
   console.log(`Iterations: ${options.iterations}`);
